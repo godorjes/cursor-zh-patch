@@ -1,0 +1,27 @@
+# patch.ps1 / restore.ps1 尚未入库时，tests/smoke.ps1 以退出码 2 结束，
+# 并写明「被测脚本缺失」。作业因此失败，避免把跳过显示成通过。
+name: smoke
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: pwsh smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run tests/smoke.ps1
+        shell: pwsh
+        run: pwsh -NoProfile -File ./tests/smoke.ps1
