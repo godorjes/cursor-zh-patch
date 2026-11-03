@@ -51,7 +51,7 @@ Copy-Item -LiteralPath $real -Destination $lab -Recurse
 
 5. 全部用例结束后，再对真实目录做一次只读清单 `real-install.after.txt`。两份清单逐行一致。
 
-若副本里只有 `resources\app.asar`，没有 `resources\app\product.json`，在测试记录里写明实际结构并暂停启动类用例。不要对真实安装解包。当前契约按已展开的 `resources\app\` 目录编写。
+用户安装是散装文件，工作台脚本在 `resources\app\out\vs\workbench\*.js`。只有 `resources\app.asar`、没有 `resources\app\product.json` 的安装，首版不支持：`patch.ps1` 退出码 `1`，说明原因，不改安装树。不要对真实安装解包。
 
 ## 怎么跑冒烟
 
@@ -71,7 +71,7 @@ Linux 上同样这条命令。工作目录不限，脚本用自己的路径找�
 
 退出码 `2` 是跳过，日志里不会出现 `SMOKE_STATUS=PASSED`。GitHub Actions 工作流 `.github/workflows/smoke.yml` 在 Ubuntu 和 Windows 上跑同一条命令；退出码 `2` 会让该作业失败，避免把「还没测」显示成通过。
 
-`patch.ps1` 与 `restore.ps1` 都落地之后，冒烟会在临时假安装上自动做：基线哈希、首次打补丁、再打一次（幂等）、还原后与基线逐文件一致、路径不存在时非零退出、版本不匹配时拒绝且不改文件。
+`patch.ps1` 与 `restore.ps1` 都落地之后，冒烟会在临时假安装上自动做：基线哈希、首次打补丁、再打一次（幂等）、还原后与基线逐文件一致、路径不存在时非零退出、版本改为 `3.28.0` 时警告后仍打补丁并能还原、读不出版本号时拒绝、只有 `app.asar` 时退出码 `1`。
 
 维护者可以用下面的参数把冒烟指到尚未放到仓库根的脚本。这只改「去哪找被测脚本」，不改传给它们的参数名：
 
@@ -95,10 +95,13 @@ pwsh -NoProfile -NonInteractive -File .\restore.ps1 -InstallPath <安装根> -Ba
 | 脚本位置 | 仓库根目录 `patch.ps1`、`restore.ps1` |
 | `-InstallPath` | 安装根，里面有 `Cursor.exe` 和 `resources\app\` |
 | `-BackupDir` | 备份写在这个目录里面，并且位于安装根之外。冒烟每次传入临时目录下的独立路径，不依赖脚本自己的默认位置 |
-| 版本 | 只接受 `product.json` 里的 `3.27.22`。不读 `package.json` 充当版本来源 |
-| 成功 | 退出码 `0`。已经打过再次执行也是 `0`，文件字节与第一次打完后相同 |
+| 版本来源 | 只读 `resources/app/product.json` 的 `version`。不读 `package.json` |
+| 版本是 `3.27.22` | 直接打补丁，退出码 `0` |
+| 版本是其他号（例如 `3.28.0`） | 打印警告（含实际版本号和 `3.27.22`），照常打补丁，退出码 `0`。见 `docs/acceptance.md` 的 G1 和 3.1 节。P0 100% 覆盖率只适用于 `3.27.22`；其他版本的验收是不崩溃、能还原 |
+| 读不出版本号 | `product.json` 缺少 `version`，或文件无法解析。退出码非 `0`（约定为 `3`，这个码只用于本情况）。安装树不改，不写备份 |
+| 成功 | 退出码 `0`。已经打过再次执行也是 `0`，文件字节与第一次打完后相同。输出包含一行 `匹配报告: 命中=<n> 未命中=<m>` |
 | 路径不存在 | 退出码非 `0`（建议 `2`）。输出里包含传入的路径。不创建该路径，不写备份文件 |
-| 版本不匹配 | 退出码非 `0`（建议 `3`）。输出里同时有检测到的版本号和 `3.27.22`。安装树一个字节都不改，不写备份文件。无 TTY 时直接拒绝 |
+| 只有 `app.asar` | 退出码 `1`。说明首版不支持，需要 `resources/app` 散装文件。安装树不改 |
 | Cursor 正在运行 | 退出码非 `0`（建议 `4`）。说明进程仍在运行，需要先退出。无 TTY 时直接拒绝，不调用 `Read-Host`。安装树不改 |
 | 其他失败 | 退出码非 `0`（建议 `1`） |
 | 输出 | 人能读的文本写到 stdout 或 stderr。不要只靠 `$ErrorActionPreference = 'Stop'` 下的 `Write-Error`，那种写法可能在走到 `exit` 之前就中断，退出码会变成别的数字 |
@@ -106,9 +109,11 @@ pwsh -NoProfile -NonInteractive -File .\restore.ps1 -InstallPath <安装根> -Ba
 | 备份 | 放在 `-BackupDir` 内。内部可以是目录镜像或单个归档。`restore.ps1` 使用同一个 `-BackupDir` 把安装根恢复成打补丁前的文件集合和字节 |
 | 安装树 | 打补丁不在安装根内增加或删除文件。备份不要放进安装根 |
 | 编码 | 写回的 `.js`、`.json`、`.css` 使用 UTF-8，无 BOM。未命中词表的文件保持原字节，包括换行 |
-| 词表 | 按契约里带引号的原文整段替换。更长的原文先替换 |
+| 词表文件 | 仓库根 `i18n/zh-CN.json`，JSON 对象，键是整句原文，值是译文。更长的键先替换。术语以 `docs/glossary.md` 为准，开发产出这个文件 |
+| 匹配报告 | 每次成功打补丁都打印 `匹配报告: 命中=<n> 未命中=<m>`。命中 = 映射表里在 `resources/app/out` 的 `.js` / `.json` / `.css` 中至少出现一次的条目数；未命中 = 一次都没出现的条目数。两者之和等于映射表条目数 |
+| 译文 | 冒烟不检查译文汉字。它检查：命中的原文从安装树消失、未收录原文仍在、占位符集合不变、能还原。若 `i18n/zh-CN.json` 存在，另查每条译文与原文的占位符一致（`{0}`、`%s`、`%d`、`${name}`） |
 
-冒烟强制检查的是：成功为 `0`、拒绝为非 `0`、提示里有约定的版本号或路径、文件哈希、校验和与磁盘一致、UTF-8 无 BOM。建议退出码 `2`、`3`、`4` 目前不逐个断言，实现可以用别的非 `0` 数字。
+冒烟强制检查的是：成功为 `0`、读不出版本或路径不存在为非 `0`、只有 `app.asar` 为 `1`、警告和匹配报告的文本、文件哈希、校验和与磁盘一致、UTF-8 无 BOM。建议退出码 `2` 和 `4` 不逐个断言。退出码 `3` 只表示读不出版本号，冒烟断言的是非 `0`。
 
 ## 校验和
 
@@ -118,7 +123,7 @@ Cursor 启动时会把 `resources/app/product.json` 里 `checksums` 的值与 `r
 - `Your Cursor installation appears to be corrupt. Please reinstall.`
 - `安装已损坏`
 
-算法与现行 Cursor / VS Code 一致：文件字节的 SHA256，标准 Base64，去掉末尾的 `=`。键使用正斜杠，相对于 `resources/app/out`。例如 `vs/workbench/workbench.desktop.main.js`。
+算法已定：文件字节的 SHA256，标准 Base64，去掉末尾的 `=`。键使用正斜杠，相对于 `resources/app/out`。例如 `vs/workbench/workbench.desktop.main.js`。
 
 冒烟夹具会为 `resources/app/out` 下的每个文件写入一条正确的基线校验和。补丁改完文件后，这些值必须改成新字节的校验和。删掉整个 `checksums` 对象不算通过。
 
@@ -144,37 +149,28 @@ resources/app/out/vs/workbench/api/node/extensionHostProcess.js
 resources/app/out/vs/workbench/contrib/composer/browser/preload-webview-browser.js
 ```
 
-`workbench.desktop.main.js` 代表传统工作台，`workbench.glass.main.js` 代表较新的 Glass 界面。两个包里命中词表的字符串都要翻译。
+`workbench.desktop.main.js` 代表传统工作台，`workbench.glass.main.js` 代表较新的 Glass 界面。补丁遍历 `resources/app/out` 下的 `.js`、`.json`、`.css`，按 `i18n/zh-CN.json` 做整句替换。
 
-### 占位词表
+### 词表与冒烟怎么对待译文
 
-正式词表由文案提取脚本落地后，只替换 `tests/smoke.ps1` 契约里的 `Replacements` 和 `Preserved`，再同步下表。在那之前，冒烟用这张占位表。
+术语以 [`docs/glossary.md`](glossary.md) 为唯一来源。开发把映射写到 `i18n/zh-CN.json`。冒烟**不验证译文汉字**，只验证三件事：占位符一致、映射能命中、打完能还原成基线哈希。
 
-替换按带引号的原文整段进行，顺序必须是更长的在前：`"Cursor Settings"`、`"New Agent"`、`"New Chat"`，然后才是 `"Settings"`、`"Agent"`、`"Chat"`。
+夹具里埋了这些原文，用来观察命中。它们在不在映射表里，决定命中还是留下：
 
-| 区域 | 夹具文件 | 原文 | 译文 |
-| --- | --- | --- | --- |
-| 聊天 | `resources/app/out/vs/workbench/workbench.desktop.main.js` | `"New Chat"` | `"新建聊天"` |
-| 聊天 | 同上 | `"Chat"` | `"聊天"` |
-| 设置 | 同上 | `"Settings"` | `"设置"` |
-| Agent | `resources/app/out/vs/workbench/workbench.glass.main.js` | `"New Agent"` | `"新建智能体"` |
-| Agent | 同上 | `"Agent"` | `"智能体"` |
-| Agent | `resources/app/out/vs/workbench/contrib/composer/browser/preload-webview-browser.js` | `"Agent"` | `"智能体"` |
-| 设置 | `resources/app/out/nls.messages.json` | `"Cursor Settings"` | `"Cursor 设置"` |
-| 设置 | 同上 | `"Settings"` | `"设置"` |
+| 夹具位置 | 原文 | 占位符 |
+| --- | --- | --- |
+| `workbench.desktop.main.js` | `New Chat` | 无 |
+| 同上 | `Apply {0} changes` | `{0}` |
+| `workbench.glass.main.js` | `New Agent` | 无 |
+| `nls.messages.json` | `Settings`、`Cursor Settings` | 无 |
+| 同上 | `Found %s results` | `%s` |
+| 同上 | `Open ${name}` | `${name}` |
 
-必须原样留下的英文：
+映射表没有收录时必须原样留下的原文：`Keep This English Label`、`Reload Window`，以及按术语表保留的 `Agent`（不用「智能体」「代理」）。`New Chat` 的正式译法是「新聊天」，`Cursor Settings` 是「Cursor 设置」，这两句的汉字由映射表和手工验收负责，冒烟不比对。
 
-| 夹具文件 | 文本 |
-| --- | --- |
-| `resources/app/out/nls.messages.json` | `"Keep This English Label"` |
-| `resources/app/out/vs/workbench/api/node/extensionHostProcess.js` | `"Reload Window"` |
+`i18n/zh-CN.json` 存在时，冒烟额外检查每一条译文与原文的占位符集合相同：`{0}`、`{1}`、`%s`、`%d`、`${name}`。打补丁之后，每个被改写的文本文件里这些占位符的集合与打补丁前相同。
 
-打补丁之后，上表译文以 UTF-8 汉字写在文件里。只写成 `\uXXXX` 转义、界面仍可能正常，但冒烟不把它算作译文已写入。
-
-未列入上表的文件（`Cursor.exe`、两个 `.pak`、`package.json`、`main.js`、`nls.keys.json`、`preload.js`、CSS、`extensionHostProcess.js`、沙箱 `workbench.js`）哈希必须与打补丁前相同。`extensionHostProcess.js` 因为含有保留英文，所以整文件都不改。
-
-每个被改写的 `.js` / `.css` 仍保留标记 `smoke-structure`，避免补丁把文件清空后只留下译文。
+没有命中的文件（`Cursor.exe`、两个 `.pak`、`package.json`、`main.js`、`nls.keys.json`、`preload.js`、CSS、`extensionHostProcess.js`、沙箱 `workbench.js`，以及只含 `Agent` 的 composer 文件）哈希必须与打补丁前相同。每个被改写的 `.js` / `.css` 仍保留标记 `smoke-structure`。
 
 ## 手工哈希
 
@@ -217,7 +213,7 @@ function Export-TreeHash([string]$Root, [string]$OutFile) {
 | 执行方式 | 自动。补丁脚本落地后，在实验室副本上再手工做一次 |
 | 前置条件 | 满足 TP-00。安装根是假安装或尚未打过补丁的实验室副本。`product.json` 的 `version` 为 `3.27.22`。Cursor 没有在运行。`-BackupDir` 是安装根之外的空目录 |
 | 步骤 | 1. 对安装根做哈希清单 `before.txt`。2. 运行 `pwsh -NoProfile -NonInteractive -File .\patch.ps1 -InstallPath <安装根> -BackupDir <备份目录>`。3. 再做清单 `patched.txt`。4. 检查词表、保留英文、`checksums`、编码 |
-| 预期结果 | 退出码 `0`。词表原文被换成对应译文，保留英文仍在。`checksums` 键集合不变，每条等于对应文件的 SHA256 Base64（无 `=`），而且被改写文件的校验和与打补丁前不同。`version` 仍是 `3.27.22`。安装根内文件没有增减。未命中词表的文件哈希不变。`.js` / `.json` / `.css` 为 UTF-8 无 BOM，非空。`-BackupDir` 在安装根之外且里面至少有一个文件。冒烟在临时假安装上检查同一组条件 |
+| 预期结果 | 退出码 `0`。输出含 `匹配报告: 命中=<n> 未命中=<m>`，数字与「映射表条目是否出现在安装树」一致。命中的原文从安装树消失，未收录原文仍在，占位符集合不变。冒烟不比对译文汉字。`checksums` 键集合不变，每条等于对应文件的 SHA256 Base64（无 `=`），被改写文件的校验和与打补丁前不同。`version` 仍是 `3.27.22`。安装根内文件没有增减。`.js` / `.json` / `.css` 为 UTF-8 无 BOM，非空。有文件被改写时，`-BackupDir` 在安装根之外且里面至少有一个文件 |
 
 ### TP-02 重复打补丁（幂等）
 
@@ -239,15 +235,35 @@ function Export-TreeHash([string]$Root, [string]$OutFile) {
 | 步骤 | 1. 运行 `pwsh -NoProfile -NonInteractive -File .\restore.ps1 -InstallPath <安装根> -BackupDir <备份目录>`。2. 生成 `restored.txt` |
 | 预期结果 | 退出码 `0`。`restored.txt` 与 `before.txt` 逐行一致：文件集合相同，每个文件 SHA256 相同。冒烟对假安装做同样的整树比较 |
 
-### TP-04 版本不匹配
+### TP-04 版本不是 3.27.22
 
 | 项 | 内容 |
 | --- | --- |
 | 优先级 | P0 |
 | 执行方式 | 自动。实验室副本可手工复核 |
-| 前置条件 | 满足 TP-00。使用一份新的未打补丁副本（或冒烟自己生成的第二份假安装）。不要在已经打过补丁、准备拿来还原的那份目录上改版本 |
-| 步骤 | 1. 只把该副本 `resources/app/product.json` 的 `version` 从 `3.27.22` 改成 `9.9.9`（冒烟用这个版本号）。其余字节不动。2. 做哈希清单。3. 用新的空 `-BackupDir` 运行 `patch.ps1`。4. 再做哈希清单 |
-| 预期结果 | 退出码非 `0`。输出里同时看得到 `9.9.9` 和 `3.27.22`。安装根哈希不变。`-BackupDir` 里没有文件。无 TTY 时脚本直接结束，不询问是否继续 |
+| 前置条件 | 满足 TP-00。使用一份新的未打补丁副本（或冒烟自己生成的第二份假安装）。对齐 `docs/acceptance.md` 的 G1 和 3.1 节：其他版本不按 P0 100% 卡发布，脚本仍要打补丁 |
+| 步骤 | 1. 只把该副本 `resources/app/product.json` 的 `version` 从 `3.27.22` 改成 `3.28.0`。其余字节不动。2. 做哈希清单 `before.txt`。3. 用新的空 `-BackupDir` 运行 `patch.ps1`。4. 记录警告和匹配报告。5. 运行 `restore.ps1`。6. 再做哈希清单 |
+| 预期结果 | 退出码 `0`。输出含「警告」，并且同时有 `3.28.0` 和 `3.27.22`。输出含匹配报告，命中数和未命中数与映射表扫描一致。`version` 仍是 `3.28.0`。还原退出码 `0`，还原后的清单与 `before.txt` 逐行一致。无 TTY 时不询问是否继续 |
+
+### TP-04b 读不出版本号
+
+| 项 | 内容 |
+| --- | --- |
+| 优先级 | P0 |
+| 执行方式 | 自动 |
+| 前置条件 | 满足 TP-00。两份独立的假安装或实验室副本，都还没打补丁 |
+| 步骤 | 1. 一份删掉 `product.json` 的 `version` 字段，JSON 仍然合法。2. 另一份把 `product.json` 改成无法解析的文本。3. 各自做哈希清单后运行 `patch.ps1` |
+| 预期结果 | 两次退出码都非 `0`。约定使用 `3`，这个退出码只表示读不出版本号，不用于「版本号不是 3.27.22」。输出说明版本问题。安装树哈希不变，不写备份 |
+
+### TP-04c 只有 app.asar
+
+| 项 | 内容 |
+| --- | --- |
+| 优先级 | P0 |
+| 执行方式 | 自动 |
+| 前置条件 | 满足 TP-00。安装根里有 `resources\app.asar`，没有 `resources\app\product.json` |
+| 步骤 | 1. 做哈希清单。2. 运行 `patch.ps1` |
+| 预期结果 | 退出码 `1`。输出说明首版不支持这种打包，需要 `resources\app` 下的散装文件。安装树哈希不变，不写备份 |
 
 ### TP-05 安装路径不存在
 
@@ -285,19 +301,19 @@ function Export-TreeHash([string]$Root, [string]$OutFile) {
 | --- | --- |
 | 优先级 | P0 |
 | 执行方式 | 编码、保留英文、文件非空由冒烟自动检查。界面为手动 |
-| 前置条件 | 实验室副本已打补丁并能完成 TP-07 的启动。手头有占位词表或当时已经替换进来的正式词表 |
-| 步骤 | 1. 在副本里打开聊天、Agent、设置页，以及一个明确不在词表中的命令或标签（夹具里对应 `"Reload Window"` 和 `"Keep This English Label"`；真实界面选一条词表未收录的英文）。2. 看按钮、标题、输入框占位符。3. 抽查被改写的 `.js`、`.json`、`.css`，确认文件开头不是 UTF-8 BOM（字节 `EF BB BF`） |
-| 预期结果 | 词表未收录的字符串仍是原来的英文，可读。界面没有 `U+FFFD`、连续问号、方框或空白按钮。中文是正常汉字。冒烟在假安装上检查保留字符串仍在、译文是 UTF-8 汉字、文本文件无 BOM 且非空、`smoke-structure` 仍在 |
+| 前置条件 | 实验室副本已打补丁并能完成 TP-07 的启动。对照 `docs/glossary.md` 和当时的 `i18n/zh-CN.json` |
+| 步骤 | 1. 在副本里打开聊天、Agent、设置页，以及一条映射表未收录的英文。2. 看按钮、标题、输入框里的 `{0}`、`%s` 是否还在，有没有变成空标签。3. 抽查被改写的 `.js`、`.json`、`.css`，确认文件开头不是 UTF-8 BOM（字节 `EF BB BF`） |
+| 预期结果 | 映射表未收录的字符串仍是原来的英文，可读。`Agent` 仍是英文。界面没有 `U+FFFD`、连续问号、方框或空白按钮。中文是正常汉字。冒烟在假安装上检查未收录原文仍在、占位符集合不变、文本文件无 BOM 且非空、`smoke-structure` 仍在。冒烟不比对具体译文字 |
 
 ### TP-09 P0 区域汉化生效
 
 | 项 | 内容 |
 | --- | --- |
 | 优先级 | P0 |
-| 执行方式 | 假安装上的契约字符串由冒烟自动检查。真实界面为手动 |
-| 前置条件 | 同 TP-08。导航时优先点侧边栏图标，不依赖「已经被翻译的菜单名」才能找到页面 |
-| 步骤 | 1. 打开聊天表面，查看新建聊天和聊天相关标签。2. 打开 Agent / Composer 表面，查看 Agent 入口和新建动作。3. 打开设置页，查看设置和 Cursor Settings 对应的标题。4. 对照当时的词表记录实际文案 |
-| 预期结果 | 三个表面里，词表已经覆盖的英文都变成了对应中文。假安装上必须精确等于占位表：聊天为「新建聊天」「聊天」，Agent 为「智能体」「新建智能体」，设置为「设置」「Cursor 设置」。真实界面以补丁实际携带的词表为准，三个区域都要出现中文，并同时满足 TP-08。品牌词若词表规定保留英文，则该词保留，周围已经收录的说明文字为中文 |
+| 执行方式 | 假安装上只自动检查命中和占位符。真实界面对照 `docs/glossary.md` 手工看 |
+| 前置条件 | 同 TP-08。导航时优先点侧边栏图标。P0 100% 只在 Cursor `3.27.22` 上要求；其他版本按 `docs/acceptance.md` 只看不崩溃、能还原 |
+| 步骤 | 1. 打开聊天表面。2. 打开 Agent 面板，确认模式名仍是 Agent，而不是「智能体」或「代理」。3. 打开 Cursor 设置页。4. 把看到的译法和 `docs/glossary.md`、`i18n/zh-CN.json` 逐条对照 |
+| 预期结果 | `3.27.22` 上，映射表已经覆盖的 P0 字符串与术语表一致，例如 New Chat 为「新聊天」，Cursor Settings 为「Cursor 设置」，Agent 保留英文。三个区域都有中文，并同时满足 TP-08。冒烟只证明夹具里的命中原文被替换、占位符还在、还原后哈希回到基线 |
 
 ## 覆盖对照
 
@@ -307,19 +323,20 @@ function Export-TreeHash([string]$Root, [string]$OutFile) {
 | TP-01 首次打补丁 | 是 | 补丁落地后复核一次 |
 | TP-02 幂等 | 是 | 可复核 |
 | TP-03 还原哈希 | 是 | 可复核 |
-| TP-04 版本不匹配 | 是，夹具版本 `9.9.9` | 可复核 |
+| TP-04 其他版本仍打补丁 | 是，夹具版本 `3.28.0`，检查警告、匹配报告、退出码 0、还原哈希 | 可复核 |
+| TP-04b 读不出版本号 | 是，缺字段和无法解析各一次 | 可复核 |
+| TP-04c 只有 app.asar | 是，退出码 1 | 可复核 |
 | TP-05 路径不存在 | 是，`patch.ps1` 与 `restore.ps1` 都测 | 可复核 |
 | TP-06 进程正在运行 | 否 | 是 |
 | TP-07 无损坏提示 | 只覆盖 `checksums` 与磁盘一致 | 启动两次，看对话框 |
-| TP-08 英文保留、无乱码无空白 | 编码、保留字符串、非空、结构标记 | 看三个 P0 表面 |
-| TP-09 P0 汉化生效 | 占位词表的精确字符串 | 看聊天、Agent、设置页 |
+| TP-08 英文保留、无乱码无空白 | 未收录原文、占位符、编码、非空、结构标记 | 看三个 P0 表面 |
+| TP-09 P0 汉化生效 | 只验证命中与还原，不验证译文字 | 对照术语表看聊天、Agent、设置页 |
 
 ## 风险
 
-- 占位词表里的「智能体」「新建聊天」等译文，可能和文案提取脚本的正式译法不同。正式表落地后只改契约段和本文的表。
-- 假安装通过，只说明脚本遵守了这张契约。TP-07、TP-08、TP-09 的界面结论仍然来自实验室副本上的真实启动。
-- 校验和按 SHA256、Base64、去掉末尾 `=` 实现。若 `3.27.22` 的某个通道用了别的算法，要改 `tests/smoke.ps1` 里的 `Get-CursorChecksum`，并更新本文。
-- 契约假定安装已经展开成 `resources/app/`，并且打补丁会遍历其中的 `.js`、`.json`、`.css`。只替换单一打包文件时，夹具里其他路径上的词会留下英文，冒烟会失败。
-- 短词先替换会把 `"New Chat"` 拆开，端状态到不了 `"新建聊天"`。
+- 冒烟通过只说明命中、占位符、校验和、还原和退出码符合契约。译文字是否等于 `docs/glossary.md`，要靠 `i18n/zh-CN.json` 的占位符检查加上实验室副本上的手工对照。
+- 夹具里的句子是探针，不是 3.27.22 的真实字符串清单。映射表里没有这些句子时，命中数可以是 0，冒烟仍然要求报告格式、还原和「未收录原文留下」成立。
+- 短键先替换会拆开更长的原文。实现按键长度从长到短替换。
+- 只有 `app.asar` 的安装会以退出码 `1` 停住。首版不自动解包。
 - 进程检测若只看进程名，真实安装的 Cursor 开着也会拒绝。测试仍然只把 `-InstallPath` 指到副本。
 - 当前仓库还没有被测脚本时，CI 是红的。日志应为 `SMOKE_STATUS=SKIPPED` 与「被测脚本缺失」。

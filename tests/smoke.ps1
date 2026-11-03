@@ -33,9 +33,15 @@ $Script:Contract = @{
     InstallPathParameter   = 'InstallPath'
     BackupDirParameter     = 'BackupDir'
     SupportedVersion       = '3.27.22'
-    MismatchVersion        = '9.9.9'
+    # 不是受支持版本时仍打补丁。冒烟把夹具改成这个版本号。
+    OtherVersion           = '3.28.0'
     ProductJsonRelative    = 'resources/app/product.json'
     OutRelative            = 'resources/app/out'
+    AsarRelative           = 'resources/app.asar'
+    # 开发产出的映射表。冒烟不核译文措辞，只核占位符、命中条数和还原。
+    MapRelative            = 'i18n/zh-CN.json'
+    # 成功打补丁时，输出里要有这一行。命中=安装树里至少出现一次的映射条目数；未命中=一次都没出现的条目数。
+    ReportPattern          = '匹配报告:\s*命中=(\d+)\s+未命中=(\d+)'
     ForbiddenInstallPaths  = @('F:\cursor\cursor', 'F:/cursor/cursor')
     InvokeTimeoutSeconds   = 120
     ProductNameShort       = 'Cursor'
@@ -46,20 +52,21 @@ $Script:Contract = @{
     Quality                = 'stable'
     # 40 字符的夹具提交号，打补丁后必须保持不变。
     ProductCommit          = 'smoke00000000000000000000000000000000000'
-    # 带引号的原文整段替换。更长的原文写在前面，实现时也要先替换长词。
-    Replacements           = @(
-        @{ Path = 'resources/app/out/nls.messages.json'; From = '"Cursor Settings"'; To = '"Cursor 设置"' }
-        @{ Path = 'resources/app/out/vs/workbench/workbench.glass.main.js'; From = '"New Agent"'; To = '"新建智能体"' }
-        @{ Path = 'resources/app/out/vs/workbench/workbench.desktop.main.js'; From = '"New Chat"'; To = '"新建聊天"' }
-        @{ Path = 'resources/app/out/nls.messages.json'; From = '"Settings"'; To = '"设置"' }
-        @{ Path = 'resources/app/out/vs/workbench/workbench.desktop.main.js'; From = '"Settings"'; To = '"设置"' }
-        @{ Path = 'resources/app/out/vs/workbench/workbench.glass.main.js'; From = '"Agent"'; To = '"智能体"' }
-        @{ Path = 'resources/app/out/vs/workbench/contrib/composer/browser/preload-webview-browser.js'; From = '"Agent"'; To = '"智能体"' }
-        @{ Path = 'resources/app/out/vs/workbench/workbench.desktop.main.js'; From = '"Chat"'; To = '"聊天"' }
+    # 夹具里埋的原文。是否命中取决于 i18n/zh-CN.json 有没有这句，冒烟不写死译文。
+    FixtureSources         = @(
+        'Cursor Settings'
+        'New Agent'
+        'Apply {0} changes'
+        'Found %s results'
+        'Open ${name}'
+        'New Chat'
+        'Settings'
     )
-    Preserved              = @(
-        @{ Path = 'resources/app/out/nls.messages.json'; Text = '"Keep This English Label"' }
-        @{ Path = 'resources/app/out/vs/workbench/api/node/extensionHostProcess.js'; Text = '"Reload Window"' }
+    # 词表未收录时必须原样留下。Agent 按 docs/glossary.md 保留英文。
+    PreservedSources       = @(
+        'Keep This English Label'
+        'Reload Window'
+        'Agent'
     )
     TextExtensions         = @('.js', '.json', '.css')
 }
@@ -296,11 +303,11 @@ function Get-FixtureText {
     $preloadJs = "/* smoke-structure */`n`"use strict`";`nfunction preload() { return 0; }`n"
     $sandboxJs = "/* smoke-structure */`n`"use strict`";`nfunction workbench() { return 0; }`n"
     $css = "/* smoke-structure */`n.monaco-workbench { color: #cccccc; }`n"
-    $desktopJs = "/* smoke-structure */`n`"use strict`";`nconst desktopLabels = [`"New Chat`", `"Chat`", `"Settings`"];`n"
+    $desktopJs = "/* smoke-structure */`n`"use strict`";`nconst desktopLabels = [`"New Chat`", `"Apply {0} changes`", `"Keep This English Label`"];`n"
     $glassJs = "/* smoke-structure */`n`"use strict`";`nconst glassLabels = [`"Agent`", `"New Agent`"];`n"
     $composerJs = "/* smoke-structure */`n`"use strict`";`nconst composerLabel = `"Agent`";`n"
     $extensionHostJs = "/* smoke-structure */`n`"use strict`";`nconst command = `"Reload Window`";`n"
-    $nlsMessages = "[`n  `"Settings`",`n  `"Cursor Settings`",`n  `"Keep This English Label`"`n]`n"
+    $nlsMessages = '[' + "`n" + '  "Settings",' + "`n" + '  "Cursor Settings",' + "`n" + '  "Found %s results",' + "`n" + '  "Open ${name}"' + "`n" + ']' + "`n"
     $nlsKeys = "[`n  `"quality`",`n  `"version`"`n]`n"
     $packageJson = "{`n  `"name`": `"Cursor`",`n  `"version`": `"$($Script:Contract.SupportedVersion)`",`n  `"private`": true`n}`n"
     return [ordered]@{
@@ -337,12 +344,85 @@ function Get-AllFixturePaths($TextMap, $BinaryMap) {
     return $paths
 }
 
-function Get-MustChangeSet {
-    $set = @{}
-    foreach ($item in $Script:Contract.Replacements) {
-        $set[$item.Path] = $true
+function Get-OutTextFiles([string]$InstallRoot) {
+    $outRoot = Join-Under $InstallRoot $Script:Contract.OutRelative
+    if (-not (Test-Path -LiteralPath $outRoot)) {
+        return @()
     }
-    $set[$Script:Contract.ProductJsonRelative] = $true
+    return @(Get-ChildItem -LiteralPath $outRoot -Recurse -File -Force |
+            Where-Object { $_.Extension -in $Script:Contract.TextExtensions })
+}
+
+function Get-InstallSourceText([string]$InstallRoot) {
+    $builder = [System.Text.StringBuilder]::new()
+    foreach ($file in @(Get-OutTextFiles $InstallRoot)) {
+        [void]$builder.AppendLine((Read-Utf8Strict $file.FullName))
+    }
+    return $builder.ToString()
+}
+
+function Get-PlaceholderTokens([string]$Text) {
+    $tokens = [System.Collections.Generic.List[string]]::new()
+    $pattern = '\$\{[A-Za-z_][A-Za-z0-9_]*\}|\{[0-9]+\}|%[sd]'
+    foreach ($match in [regex]::Matches($Text, $pattern)) {
+        $tokens.Add($match.Value) | Out-Null
+    }
+    return @($tokens | Sort-Object)
+}
+
+function Get-TranslationMap {
+    $path = Join-Path $Script:RepoRoot $Script:Contract.MapRelative
+    $info = @{
+        Path     = $path
+        Present  = $false
+        Entries  = @{}
+    }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return $info
+    }
+    $info.Present = $true
+    $parsed = (Read-Utf8Strict $path) | ConvertFrom-Json
+    foreach ($property in @($parsed.PSObject.Properties)) {
+        $info.Entries[$property.Name] = [string]$property.Value
+    }
+    return $info
+}
+
+function Get-ExpectedMatchCounts([string]$InstallRoot, $Entries) {
+    $text = Get-InstallSourceText $InstallRoot
+    $hit = 0
+    $miss = 0
+    foreach ($source in @($Entries.Keys)) {
+        if ($text.Contains([string]$source)) {
+            $hit++
+        } else {
+            $miss++
+        }
+    }
+    return @{ Hit = $hit; Miss = $miss }
+}
+
+function Get-MustChangeSet([string]$InstallRoot, $Entries) {
+    $set = @{}
+    $rootFull = [System.IO.Path]::GetFullPath($InstallRoot)
+    foreach ($file in @(Get-OutTextFiles $InstallRoot)) {
+        $text = Read-Utf8Strict $file.FullName
+        $touches = $false
+        foreach ($source in @($Entries.Keys)) {
+            $translation = [string]$Entries[$source]
+            if ($translation -ne [string]$source -and $text.Contains([string]$source)) {
+                $touches = $true
+                break
+            }
+        }
+        if ($touches) {
+            $relative = [System.IO.Path]::GetRelativePath($rootFull, $file.FullName).Replace('\', '/')
+            $set[$relative] = $true
+        }
+    }
+    if ($set.Count -gt 0) {
+        $set[$Script:Contract.ProductJsonRelative] = $true
+    }
     return $set
 }
 
@@ -403,25 +483,18 @@ function New-FakeInstall([string]$Destination) {
 }
 
 function Assert-HarnessFixtures {
-    $textMap = Get-FixtureText
-    foreach ($item in $Script:Contract.Replacements) {
-        if (-not $textMap.Contains($item.Path)) {
-            throw "契约原文路径不在夹具中: $($item.Path)"
-        }
-        $content = $textMap[$item.Path]
-        if (-not $content.Contains($item.From)) {
-            throw "契约原文不在夹具中: $($item.Path) $($item.From)"
-        }
-        if ($content.Contains($item.To)) {
-            throw "夹具在打补丁前就含有译文: $($item.Path) $($item.To)"
+    $combined = ''
+    foreach ($content in (Get-FixtureText).Values) {
+        $combined += $content
+    }
+    foreach ($source in $Script:Contract.FixtureSources) {
+        if (-not $combined.Contains([string]$source)) {
+            throw "夹具缺少原文: $source"
         }
     }
-    foreach ($item in $Script:Contract.Preserved) {
-        if (-not $textMap.Contains($item.Path)) {
-            throw "保留文本路径不在夹具中: $($item.Path)"
-        }
-        if (-not $textMap[$item.Path].Contains($item.Text)) {
-            throw "保留文本不在夹具中: $($item.Path) $($item.Text)"
+    foreach ($source in $Script:Contract.PreservedSources) {
+        if (-not $combined.Contains([string]$source)) {
+            throw "夹具缺少应保留的原文: $source"
         }
     }
     $commit = [string]$Script:Contract.ProductCommit
@@ -534,26 +607,82 @@ function Assert-StructureMarkers([string]$InstallRoot) {
     }
 }
 
-function Assert-Glossary([string]$InstallRoot) {
-    foreach ($item in $Script:Contract.Replacements) {
-        $full = Join-Under $InstallRoot $item.Path
-        try {
-            $text = Read-Utf8Strict $full
-            Add-Result ($text.Contains([string]$item.To)) "译文已写入 $($item.Path) $($item.To)"
-            Add-Result (-not $text.Contains([string]$item.From)) "原文已消失 $($item.Path) $($item.From)"
-        } catch {
-            Add-Result $false "无法按 UTF-8 读取 $($item.Path)"
+function Assert-MapPlaceholders($Entries) {
+    $bad = [System.Collections.Generic.List[string]]::new()
+    foreach ($source in @($Entries.Keys)) {
+        $translation = [string]$Entries[$source]
+        $left = @(Get-PlaceholderTokens ([string]$source)) -join '|'
+        $right = @(Get-PlaceholderTokens $translation) -join '|'
+        if ($left -ne $right) {
+            $bad.Add("$source => $translation") | Out-Null
         }
     }
-    foreach ($item in $Script:Contract.Preserved) {
-        $full = Join-Under $InstallRoot $item.Path
-        try {
-            $text = Read-Utf8Strict $full
-            Add-Result ($text.Contains([string]$item.Text)) "未翻译文本仍在 $($item.Path) $($item.Text)"
-        } catch {
-            Add-Result $false "无法按 UTF-8 读取保留文本 $($item.Path)"
+    Add-Result ($bad.Count -eq 0) 'i18n/zh-CN.json 每条译文保留原文占位符'
+    foreach ($item in $bad) {
+        Write-Line "    占位符不一致 $item"
+    }
+}
+
+function Assert-PlaceholderFilesStable([string]$InstallRoot, $BeforeSnapshotNote) {
+    $bad = [System.Collections.Generic.List[string]]::new()
+    $rootFull = [System.IO.Path]::GetFullPath($InstallRoot)
+    foreach ($file in @(Get-OutTextFiles $InstallRoot)) {
+        $relative = [System.IO.Path]::GetRelativePath($rootFull, $file.FullName).Replace('\', '/')
+        $after = @(Get-PlaceholderTokens (Read-Utf8Strict $file.FullName)) -join '|'
+        $before = [string]$BeforeSnapshotNote[$relative]
+        if ($before -ne $after) {
+            $bad.Add($relative) | Out-Null
         }
     }
+    Add-Result ($bad.Count -eq 0) '打补丁后各文本文件的占位符集合不变'
+    foreach ($item in $bad) {
+        Write-Line "    占位符变化 $item"
+    }
+}
+
+function Get-PlaceholderNotes([string]$InstallRoot) {
+    $notes = @{}
+    $rootFull = [System.IO.Path]::GetFullPath($InstallRoot)
+    foreach ($file in @(Get-OutTextFiles $InstallRoot)) {
+        $relative = [System.IO.Path]::GetRelativePath($rootFull, $file.FullName).Replace('\', '/')
+        $notes[$relative] = (@(Get-PlaceholderTokens (Read-Utf8Strict $file.FullName)) -join '|')
+    }
+    return $notes
+}
+
+function Assert-HitsAndPreserved([string]$InstallRoot, $Entries, [string]$BeforeText) {
+    $text = Get-InstallSourceText $InstallRoot
+    foreach ($source in @($Entries.Keys)) {
+        if (-not $BeforeText.Contains([string]$source)) {
+            continue
+        }
+        $translation = [string]$Entries[$source]
+        $present = $text.Contains([string]$source)
+        if ($translation -eq [string]$source) {
+            Add-Result $present "映射值与原文相同，原文仍在: $source"
+        } elseif ($present) {
+            Add-Result $false "已命中的原文仍在安装树中: $source"
+        } else {
+            Add-Result $true "已命中的原文已从安装树消失: $source"
+        }
+    }
+    foreach ($source in $Script:Contract.PreservedSources) {
+        if ($Entries.ContainsKey([string]$source) -and [string]$Entries[[string]$source] -ne [string]$source) {
+            continue
+        }
+        Add-Result ($text.Contains([string]$source)) "未收录原文仍在: $source"
+    }
+}
+
+function Assert-MatchReport([string]$Output, [int]$ExpectedHit, [int]$ExpectedMiss, [string]$Label) {
+    $match = [regex]::Match($Output, $Script:Contract.ReportPattern)
+    Add-Result $match.Success "$Label 输出含匹配报告（命中/未命中数量）"
+    if (-not $match.Success) {
+        return
+    }
+    $hit = [int]$match.Groups[1].Value
+    $miss = [int]$match.Groups[2].Value
+    Add-Result (($hit -eq $ExpectedHit) -and ($miss -eq $ExpectedMiss)) "$Label 匹配报告为命中=$ExpectedHit 未命中=$ExpectedMiss（实际命中=$hit 未命中=$miss）"
 }
 
 function Assert-ProductIdentity($Before, $After) {
@@ -670,6 +799,13 @@ try {
     Write-Line "受支持版本: $($Script:Contract.SupportedVersion)"
     Write-Line "参数: -$($Script:Contract.InstallPathParameter) -$($Script:Contract.BackupDirParameter)"
     Write-Line '安全边界: 冒烟只写入临时假安装目录。'
+    $mapInfo = Get-TranslationMap
+    if ($mapInfo.Present) {
+        Write-Line "词表: $($mapInfo.Path) （$($mapInfo.Entries.Count) 条）"
+        Assert-MapPlaceholders $mapInfo.Entries
+    } else {
+        Write-Line "词表: $($mapInfo.Path) 不存在，占位符检查跳过，命中数按 0 计算"
+    }
 
     $install = Join-Path $Script:WorkRoot 'install-main'
     $backup = Join-Path $Script:WorkRoot 'backup-main'
@@ -679,7 +815,10 @@ try {
     Add-Result ($baseline.Count -eq $expectedCount) "假安装文件数是 $expectedCount"
     Assert-TextHygiene $install '基线'
     $baselineProduct = Assert-ChecksumsMatchDisk $install '基线'
-    $mustChange = Get-MustChangeSet
+    $placeholderNotes = Get-PlaceholderNotes $install
+    $beforeText = Get-InstallSourceText $install
+    $expectedMatch = Get-ExpectedMatchCounts $install $mapInfo.Entries
+    $mustChange = Get-MustChangeSet $install $mapInfo.Entries
 
     Write-Line '--- 首次打补丁 ---'
     $first = Invoke-UnderTest $PatchScript $install $backup
@@ -688,15 +827,18 @@ try {
         Write-ChildOutput $first
         Add-Result $false '首次打补丁失败，跳过依赖它的幂等与还原断言'
     } else {
+        $firstOutput = Get-CombinedOutput $first
+        Assert-MatchReport $firstOutput $expectedMatch.Hit $expectedMatch.Miss '首次打补丁'
         $patched = Get-InstallSnapshot $install
         Assert-ChangedFileSet $baseline $patched $mustChange
-        Assert-Glossary $install
+        Assert-HitsAndPreserved $install $mapInfo.Entries $beforeText
+        Assert-PlaceholderFilesStable $install $placeholderNotes
         Assert-TextHygiene $install '打补丁后'
         Assert-StructureMarkers $install
         $patchedProduct = Assert-ChecksumsMatchDisk $install '打补丁后'
         Assert-ProductIdentity $baselineProduct $patchedProduct
         $outPrefix = $Script:Contract.OutRelative + '/'
-        foreach ($relative in $mustChange.Keys) {
+        foreach ($relative in @($mustChange.Keys)) {
             if ($relative -eq $Script:Contract.ProductJsonRelative) {
                 continue
             }
@@ -717,7 +859,11 @@ try {
         $backupFiles = @(Get-BackupFiles $backup)
         $backupInside = Test-IsInside $install $backup
         Add-Result (-not $backupInside) '备份目录在安装目录之外'
-        Add-Result ($backupFiles.Count -ge 1) '备份目录内至少有一个原始文件'
+        if ($mustChange.Count -gt 0) {
+            Add-Result ($backupFiles.Count -ge 1) '备份目录内至少有一个原始文件'
+        } else {
+            Add-Result ($backupFiles.Count -eq 0) '没有命中时不写入备份文件'
+        }
 
         Write-Line '--- 重复打补丁 ---'
         $second = Invoke-UnderTest $PatchScript $install $backup
@@ -738,14 +884,14 @@ try {
         Assert-SnapshotEqual $baseline $restored '还原后整树哈希与基线一致'
     }
 
-    Write-Line '--- 版本不匹配 ---'
+    Write-Line '--- 其他版本仍打补丁 ---'
     $versionInstall = Join-Path $Script:WorkRoot 'install-version'
     $versionBackup = Join-Path $Script:WorkRoot 'backup-version'
     New-FakeInstall $versionInstall
     $productPath = Join-Under $versionInstall $Script:Contract.ProductJsonRelative
     $productText = Read-Utf8Strict $productPath
     $needle = '"version": "' + $Script:Contract.SupportedVersion + '"'
-    $replacement = '"version": "' + $Script:Contract.MismatchVersion + '"'
+    $replacement = '"version": "' + $Script:Contract.OtherVersion + '"'
     $found = ([regex]::Matches($productText, [regex]::Escape($needle))).Count
     if ($found -ne 1) {
         throw "product.json 里受支持版本字段出现 $found 次，夹具应恰好一次"
@@ -753,16 +899,85 @@ try {
     $productText = $productText.Replace($needle, $replacement)
     Write-Utf8NoBom $productPath $productText
     $versionBaseline = Get-InstallSnapshot $versionInstall
+    $versionExpected = Get-ExpectedMatchCounts $versionInstall $mapInfo.Entries
     $versionRun = Invoke-UnderTest $PatchScript $versionInstall $versionBackup
-    Add-Result ($versionRun.ExitCode -ne 0) '版本不匹配时退出码非 0'
+    Add-Result ($versionRun.ExitCode -eq 0) '版本不是 3.27.22 时退出码为 0'
     $versionOutput = Get-CombinedOutput $versionRun
-    Add-Result ($versionOutput.Contains([string]$Script:Contract.MismatchVersion) -and $versionOutput.Contains([string]$Script:Contract.SupportedVersion)) '版本不匹配提示同时包含实际版本与受支持版本'
-    if ($versionRun.ExitCode -eq 0 -or -not ($versionOutput.Contains([string]$Script:Contract.MismatchVersion))) {
+    $warned = $versionOutput.Contains('警告') -and $versionOutput.Contains([string]$Script:Contract.OtherVersion) -and $versionOutput.Contains([string]$Script:Contract.SupportedVersion)
+    Add-Result $warned '版本不是 3.27.22 时输出警告，并带上实际版本与 3.27.22'
+    Assert-MatchReport $versionOutput $versionExpected.Hit $versionExpected.Miss '其他版本'
+    if ($versionRun.ExitCode -ne 0 -or -not $warned) {
         Write-ChildOutput $versionRun
     }
-    $versionAfter = Get-InstallSnapshot $versionInstall
-    Assert-SnapshotEqual $versionBaseline $versionAfter '版本不匹配时安装目录字节未变'
-    Add-Result (@(Get-BackupFiles $versionBackup).Count -eq 0) '版本不匹配时不写入备份文件'
+    $versionProduct = $null
+    try {
+        $versionProduct = Get-ProductObject $versionInstall
+    } catch {
+        Add-Result $false '其他版本打补丁后 product.json 仍可解析'
+    }
+    if ($null -ne $versionProduct) {
+        Add-Result ((Get-JsonField $versionProduct 'version') -eq $Script:Contract.OtherVersion) '其他版本打补丁后 version 仍是夹具里的版本'
+    }
+    $versionRestore = Invoke-UnderTest $RestoreScript $versionInstall $versionBackup
+    Add-Result ($versionRestore.ExitCode -eq 0) '其他版本还原退出码为 0'
+    if ($versionRestore.ExitCode -ne 0) {
+        Write-ChildOutput $versionRestore
+    }
+    $versionRestored = Get-InstallSnapshot $versionInstall
+    Assert-SnapshotEqual $versionBaseline $versionRestored '其他版本还原后整树哈希与打补丁前基线一致'
+
+    Write-Line '--- 读不出版本号 ---'
+    foreach ($case in @(
+            @{ Name = '缺少 version'; Mode = 'missing-field' },
+            @{ Name = 'product.json 无法解析'; Mode = 'unreadable' }
+        )) {
+        $badInstall = Join-Path $Script:WorkRoot ("install-" + $case.Mode)
+        $badBackup = Join-Path $Script:WorkRoot ("backup-" + $case.Mode)
+        New-FakeInstall $badInstall
+        $badProduct = Join-Under $badInstall $Script:Contract.ProductJsonRelative
+        if ($case.Mode -eq 'missing-field') {
+            $badText = Read-Utf8Strict $badProduct
+            $badLine = '  "version": "' + $Script:Contract.SupportedVersion + '",' + "`n"
+            if (-not $badText.Contains($badLine)) {
+                throw "夹具 product.json 找不到 version 行"
+            }
+            Write-Utf8NoBom $badProduct ($badText.Replace($badLine, ''))
+        } else {
+            Write-Utf8NoBom $badProduct "this is not json`n"
+        }
+        $badBaseline = Get-InstallSnapshot $badInstall
+        $badRun = Invoke-UnderTest $PatchScript $badInstall $badBackup
+        Add-Result ($badRun.ExitCode -ne 0) "$($case.Name) 时退出码非 0"
+        $badOutput = Get-CombinedOutput $badRun
+        Add-Result ($badOutput.Contains('版本')) "$($case.Name) 时输出说明版本问题"
+        if ($badRun.ExitCode -eq 0 -or -not $badOutput.Contains('版本')) {
+            Write-ChildOutput $badRun
+        }
+        $badAfter = Get-InstallSnapshot $badInstall
+        Assert-SnapshotEqual $badBaseline $badAfter "$($case.Name) 时安装目录字节未变"
+        Add-Result (@(Get-BackupFiles $badBackup).Count -eq 0) "$($case.Name) 时不写入备份文件"
+    }
+
+    Write-Line '--- 只有 app.asar ---'
+    $asarInstall = Join-Path $Script:WorkRoot 'install-asar'
+    $asarBackup = Join-Path $Script:WorkRoot 'backup-asar'
+    New-Item -ItemType Directory -Force -Path $asarInstall | Out-Null
+    $asarExe = Join-Path $asarInstall 'Cursor.exe'
+    [System.IO.File]::WriteAllBytes($asarExe, [System.Text.Encoding]::ASCII.GetBytes("MZ`nCURSOR_EXE_STUB`n"))
+    $asarFile = Join-Under $asarInstall $Script:Contract.AsarRelative
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $asarFile) | Out-Null
+    [System.IO.File]::WriteAllBytes($asarFile, [byte[]](0x41, 0x53, 0x41, 0x52, 0x00))
+    $asarBaseline = Get-InstallSnapshot $asarInstall
+    $asarRun = Invoke-UnderTest $PatchScript $asarInstall $asarBackup
+    Add-Result ($asarRun.ExitCode -eq 1) '只有 app.asar 时退出码为 1'
+    $asarOutput = Get-CombinedOutput $asarRun
+    Add-Result ($asarOutput.ToLowerInvariant().Contains('asar')) '只有 app.asar 时输出说明原因'
+    if ($asarRun.ExitCode -ne 1 -or -not $asarOutput.ToLowerInvariant().Contains('asar')) {
+        Write-ChildOutput $asarRun
+    }
+    $asarAfter = Get-InstallSnapshot $asarInstall
+    Assert-SnapshotEqual $asarBaseline $asarAfter '只有 app.asar 时安装目录字节未变'
+    Add-Result (@(Get-BackupFiles $asarBackup).Count -eq 0) '只有 app.asar 时不写入备份文件'
 
     Write-Line '--- 路径不存在 ---'
     $missingInstall = Join-Path $Script:WorkRoot 'missing-install'
