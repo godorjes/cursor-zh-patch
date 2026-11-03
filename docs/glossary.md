@@ -38,7 +38,7 @@
 | English term | 处理方式 | 统一译法 | 说明/示例 |
 | --- | --- | --- | --- |
 | Cursor | 保留 | Cursor | 品牌名。“Cursor Settings” → “Cursor 设置”[官方-Tab] |
-| Agent（模式/功能名） | 保留 | Agent | **全项目不使用“智能体”“代理”**。模式切换器中 Agent 与 Ask、Plan 并列，官方已保留 Ask/Plan 英文（“Ask 模式”“Plan 模式”[官方-Ask][官方-Plan]），Agent 也保留才一致；官方中文文档对 Agent 有“智能体/代理/Agent”三种写法，我们统一为一种。示例：“Agent 模式”“打开 Agent 面板”（官方原文即“打开 Agent 面板”[官方-Plan]）。泛指的 “agents”（复数、非功能名）同样写作 “Agent”，如 “3 个 Agent 正在运行”。 |
+| Agent（模式/功能名） | 保留 | Agent | **全项目不使用“智能体”“代理”**。模式切换器中 Agent 与 Ask、Plan 并列，官方已保留 Ask/Plan 英文（“Ask 模式”“Plan 模式”[官方-Ask][官方-Plan]），Agent 也保留才一致；官方中文文档对 Agent 有“智能体/代理/Agent”三种写法，我们统一为一种。示例：“Agent 模式”“打开 Agent 面板”（官方原文即“打开 Agent 面板”[官方-Plan]）。泛指的 “agents”（复数、非功能名）同样写作 “Agent”，如 “3 个 Agent 正在运行”。**已定（开发人员一）**：补丁只替换映射表中的整句；含 Agent 的译文必须保留英文 “Agent”（如“新建 Agent”“Cloud Agent”）；不在表中的字符串保持不变。 |
 | Agent panel / Agents Window | 保留 + 翻译 | Agent 面板 / Agent 窗口 | 官方有“智能体面板”“代理窗口”，按上条统一。 |
 | Composer | 保留 | Composer | 3.x 中为 Cursor 自研模型名（如 “Composer 2.5”[官方首页模型表]）；旧版指多文件编辑面板，同样不译。 |
 | Chat | 翻译 | 聊天 | “New Chat” → “新聊天”；“chat input” → “聊天输入框”[官方-提示]。作为 `@Chats` 提及语法时不译。 |
@@ -50,13 +50,13 @@
 | Project Rules | 翻译 | 项目规则 | [官方-规则] |
 | User Rules | 翻译 | 用户规则 | [官方-规则] |
 | Team Rules | 翻译 | 团队规则 | [官方-规则] |
-| Rules for AI | 翻译 | AI 规则 | 旧版设置项名称，若 3.27.22 中仍存在则使用此译法。 |
+| Rules for AI | 翻译 | AI 规则 | 旧版设置项名称。**待验证**：3.27.22 是否仍存在，由开发人员一从真实安装包提取字符串后确认；存在则使用此译法。 |
 | Always Apply / Apply Intelligently / Apply to Specific Files / Apply Manually | 翻译 | 始终应用 / 智能应用 / 应用于特定文件 / 手动应用 | 规则类型下拉菜单[官方-规则 help 页] |
 | MCP | 保留 | MCP | 全称 “模型上下文协议 (MCP)”[官方-MCP]，界面一律只写 MCP。 |
 | MCP Server | 保留 + 翻译 | MCP 服务器 | [官方-MCP] |
 | MCP Tools | 保留 + 翻译 | MCP 工具 | [官方-MCP] |
 | Tab（功能） | 保留 | Tab | 补全功能名，“Tab 补全”[官方-Tab]。按键 Tab 也不译。 |
-| Background Agent | 保留 | Background Agent | 旧名，3.x 已更名 Cloud Agent。若 3.27.22 中残留，保留原文，不另造译名。 |
+| Background Agent | 保留 | Background Agent | 旧名，3.x 已更名 Cloud Agent。**待验证**：3.27.22 是否残留，由开发人员一从真实安装包提取字符串后确认；若残留，保留原文，不另造译名。 |
 | Cloud Agent | 保留 | Cloud Agent | 官方有“云端代理/云端智能体”[官方-合规][官方-Cloud]，按 Agent 原则保留。下拉选项 “Local / Cloud” → “本地 / 云端”。 |
 | Bugbot | 保留 | Bugbot | [官方-Bugbot] |
 | Apply | 翻译 | 应用 | 按钮。“Apply to file” → “应用到文件”。 |
@@ -72,14 +72,14 @@
 | Auto | 保留 | Auto | 模型选择器中的自动选择选项，属产品功能名。 |
 | Max Mode | 保留 | Max Mode | [官方-Max]，不写“最大模式”。 |
 | Thinking | 翻译 | 思考 | 模型能力标签。 |
-| Memories | 翻译 | 记忆 | 官方中文文档未查到对应页面，**待核实**。 |
-| Notepads | 翻译 | 记事本 | 旧版 Beta 功能，若存在则使用。 |
+| Memories | 翻译 | 记忆 | 官方中文文档未查到对应页面。**待验证**：3.27.22 是否仍存在，由开发人员一从真实安装包提取字符串后确认。 |
+| Notepads | 翻译 | 记事本 | 旧版 Beta 功能。**待验证**：3.27.22 是否仍存在，由开发人员一从真实安装包提取字符串后确认；存在则使用。 |
 | Indexing | 翻译 | 索引 | 设置页标签 “Indexing” → “索引”；“Codebase Indexing” → “代码库索引”；“Reindex/Resync” → “重新索引”[官方-忽略]。 |
 | Docs | 翻译 | 文档 | 设置中的文档源；`@Docs` 语法不译。 |
 | Web | 翻译 | 网页 | “Web search” → “网页搜索”[官方-Agent]；`@Web` 语法不译。 |
 | Checkpoint | 翻译 | 检查点 | [官方-Agent] |
 | Restore / Restore Checkpoint | 翻译 | 还原 / 还原检查点 | 官方：“然后还原，将所有文件恢复到该状态”[官方-Agent]。Revert → “回退”[官方-Plan]。 |
-| Diff | 保留（正文）/ 翻译（标签） | diff / 差异 | 正文与提及沿用官方“diff”（小写）[官方-提示]；独立标签或标题用“差异”，如 “View Diff” → “查看差异”。见待对齐 Q4。 |
+| Diff | 保留（技术名词）/ 翻译（标签、按钮） | Diff / 差异 | **已定（开发人员一）**：标签或按钮用“差异”，如 “View Diff” → “查看差异”；作为技术名词保留 “Diff”，如“Diff 视图”。 |
 | Review | 翻译 | 审查 | “Review changes” → “审查更改”[官方首页]。Bugbot 的 PR review 官方用“评审”[官方-Bugbot]，Bugbot 相关文案可用“评审”，其余统一“审查”。 |
 | Changes | 翻译 | 更改 | 与 VS Code 一致。 |
 | Terminal | 翻译 | 终端 | [VSC][官方-Agent] |
@@ -96,7 +96,7 @@
 | Enabled / Disabled | 翻译 | 已启用 / 已禁用 | 状态文字。与控件旁的“开/关”区分，不混用。 |
 | Keybindings / Keyboard Shortcuts | 翻译 | 键盘快捷方式 | 与 [VSC] 一致，不写“快捷键绑定”。 |
 | Privacy Mode | 翻译 | 隐私模式 | [官方-合规]；“Legacy Privacy Mode” → “旧版隐私模式”[官方-Bugbot] |
-| @-mentions | 翻译 | @ 提及 | [官方-提示] |
+| @-mentions | 有条件翻译 | 显示文字翻译；插入 token 不译 | [官方-提示]。**已定（开发人员一）**：仅当显示字符串与插入 token 在代码中是不同字符串时，才翻译显示文字。同一字符串兼作显示和插入的，保持英文，由开发人员一在其 PR 中列出。 |
 | Symbols | 翻译 | 符号 | |
 | Files & Folders | 翻译 | 文件和文件夹 | [官方-提示] |
 | Git | 保留 | Git | |
@@ -138,8 +138,8 @@
 - 占位符：`{0}`、`{1}`、`%s`、`%d`、`${name}`、`{count}` 等，必须原样保留且**数量一致**；可以调整语序，但不得增删、改名、翻译。
 - 快捷键：`Ctrl+I`、`Ctrl+Shift+J`、`Shift+Tab` 等；键名不译（不写“控制键”）。
 - 代码与语法：反引号内容 `` `code` ``、`@` 提及标记、`/` 命令、文件名与路径、JSON 键、环境变量、URL。
-- HTML/Markdown 标记、`&` 助记符（如 `&&File`）：保留标记，助记符放到中文后用括号形式，遵循 VS Code 做法（如“文件(&&F)”），具体由开发人员一确认（见待对齐 Q3）。
-- 大小写敏感名词：Cursor、MCP、PR、Git、GitHub、Bugbot、Max Mode、Pro+、Composer、Tab 按原大小写书写；token、diff 小写。
+- HTML/Markdown 标记、`&` 助记符：原文含 `&&` 的，译文必须保留 `&&`，格式为“文件(&&F)”。**已定（开发人员一）。**
+- 大小写敏感名词：Cursor、MCP、PR、Git、GitHub、Bugbot、Max Mode、Pro+、Composer、Tab 按原大小写书写；token 小写。Diff 作为技术名词写 “Diff”，标签与按钮用“差异”。
 
 ### 3.5 文案长度上限
 | 类型 | 上限 | 示例 |
@@ -162,16 +162,20 @@
 - 开关控件旁用“开/关”；状态文字用“已启用/已禁用”。**已定（开发组长 2026-11-03）。**
 - 控件本身不写“已启用/已禁用”，状态文字不写“开/关”。
 
+### 3.8 映射表替换
+- 补丁只替换映射表中的整句原文。不在映射表中的字符串保持不变。
+- 含 Agent 的映射条目，译文必须保留英文 “Agent”（如“新建 Agent”“Cloud Agent”）。**已定（开发人员一）。**
+
 ## 4. 待对齐（需开发人员一确认）
 
 | # | 问题 | 我的建议 |
 | --- | --- | --- |
-| Q1 | **Agent 是否保留英文**：官方中文文档正文大量使用“智能体”。本表选择全项目保留 “Agent”。**已定（开发组长 2026-11-03 拍板）：保留 Agent。** 开发人员一请确认补丁能否做全局一致替换（含 Agent 面板、子 Agent、Cloud Agent）。 | 保留 Agent |
-| Q2 | 补丁作用于哪一层：`out/nls.messages.json` / 语言包扩展，还是直接改打包后的 JS（`workbench.desktop.main.js` 等）？这决定 Cursor 专有字符串（非 VS Code nls 字符串）是否能被定位，以及是否会触发“安装似乎已损坏”的完整性警告。 | 请给出方案和受影响文件清单 |
-| Q3 | 菜单助记符 `&&` 与命令面板英文别名：汉化后命令面板能否仍用英文搜索（VS Code 语言包会保留英文别名）？ | 必须保留英文可搜索 |
-| Q4 | Diff 的处理：正文保留 “diff”、标签用“差异”是否可接受，或全部统一为“差异”？ | 先按本表执行，测试反馈后定 |
-| Q5 | `@` 提及菜单中的项目名（Files & Folders、Docs、Web、Codebase、Terminals）：显示标签翻译，插入到输入框的 token（`@Web` 等）保持英文。补丁能否区分“显示文本”和“插入文本”？ | 区分；不能区分则整项保留英文 |
-| Q6 | 来自服务端的字符串（模型列表、方案/用量提示、部分错误信息、更新日志）无法在本地补丁中翻译，是否明确排除？ | 排除，见 p0-scope.md |
-| Q7 | Memories、Notepads、Background Agent、Rules for AI 在 3.27.22 中是否仍存在？请从实际字符串中确认，不存在的从术语表移除。 | 以实际字符串为准 |
+| Q1 | **Agent 是否保留英文**。**已定（开发人员一）**：补丁只替换映射表中的整句原文；含 Agent 的译文必须保留英文 “Agent”（如“新建 Agent”“Cloud Agent”）；不在表中的字符串保持不变。开发组长 2026-11-03 已拍板保留 Agent，不用“智能体”“代理”。 | 保留 Agent，只做整句替换 |
+| Q2 | 补丁作用于哪一层。**已定（开发人员一）**：VS Code 核心界面使用官方 zh-hans 语言包（nls），locale=zh-cn；Cursor 自有界面替换打包后的 `workbench.*.main.js` 中的字符串，并重算 `product.json` 校验和，因此“安装似乎已损坏”警告不应出现。 | 语言包 + workbench 字符串替换，并重算校验和 |
+| Q3 | 菜单助记符 `&&` 与命令面板英文搜索。`&&` **已定（开发人员一）**：译文使用“文件(&&F)”，原文含 `&&` 的映射译文必须包含 `&&`。VS Code 原生命令仍可通过语言包用英文搜索。Cursor 自有命令的英文搜索为**待验证**，开发人员一将在真实安装包上确认，暂不阻断发布。 | `&&` 必须保留；Cursor 命令英文搜索待验证 |
+| Q4 | Diff 的处理。**已定（开发人员一）**：标签和按钮用“差异”；作为技术名词保留 “Diff”（如“Diff 视图”）。 | 标签/按钮“差异”，技术名词 “Diff” |
+| Q5 | `@` 提及的显示文字与插入 token。**已定（开发人员一，有条件）**：仅当显示字符串与插入 token 在代码中是不同字符串时，才翻译显示文字。同一字符串兼作显示和插入的，保持英文，由开发人员一在其 PR 中列出。 | 能分开才译显示文字 |
+| Q6 | 来自服务端的字符串（模型列表、方案/用量提示、部分错误信息、更新日志）。**已定（开发人员一）**：排除在范围外，补丁无法触及。见 `docs/p0-scope.md`。 | 排除 |
+| Q7 | Memories、Notepads、Background Agent、Rules for AI 在 3.27.22 中是否仍存在。**待验证**：开发人员一正在从真实安装包提取字符串。这些术语行保留，确认后再决定是否移除。 | 以实际字符串为准 |
 | Q8 | 开关类按钮（On/Off、Enabled/Disabled）译为“开/关”还是“已启用/已禁用”？**已定（开发组长 2026-11-03）：控件旁用“开/关”，状态文字用“已启用/已禁用”。** | 控件旁“开/关”，状态文字“已启用/已禁用” |
 
