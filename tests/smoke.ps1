@@ -59,6 +59,14 @@ $Script:Contract = @{
         'Status["Log Out"] = "Log Out"'
         'localize(0, "Cursor Settings")'
         'original: "New Agent"'
+        'document.designMode="On"'
+        '["on","On","ON","off","Off","OFF"]'
+        'shellLaunchConfig.type="Local"'
+        'case"Local":'
+        'x||"Chat"'
+        'new Set(["Local","Cloud"])'
+        '["Local","Cloud"].includes(t)'
+        '.fire("Chat")'
     )
     ForbiddenInstallPaths  = @('F:\cursor\cursor', 'F:/cursor/cursor')
     InvokeTimeoutSeconds   = 120
@@ -352,6 +360,18 @@ const glassLabels = ["Agent", "New Agent"];
 const glassRight = "Chat" === flag;
 const title = { label: "New Agent", original: "New Agent" };
 const extra = "Smoke Extra Label";
+document.designMode="On";
+const yamlBool=["on","On","ON","off","Off","OFF"];
+shellLaunchConfig.type="Local";
+switch(mode){case"Local":break;}
+const fallback=x||"Chat";
+const places=new Set(["Local","Cloud"]);
+const picked=["Local","Cloud"].includes(t);
+emitter.fire("Chat");
+const powerLabel="On";
+const placeLabel="Local";
+const cloudLabel="Cloud";
+const chatLabel="Chat";
 '@
     $glassJs = $glassJs.Replace("`r`n", "`n") + "`n"
     $composerJs = "/* smoke-structure */`n`"use strict`";`nconst composerLabel = `"Agent`";`n"
@@ -425,6 +445,49 @@ function New-OrdinalDictionary {
     return [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::Ordinal)
 }
 
+function Copy-PatchKit([string]$Destination) {
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    $roots = @(
+        (Split-Path -Parent $PatchScript),
+        (Split-Path -Parent $RestoreScript)
+    ) | Select-Object -Unique
+    foreach ($root in $roots) {
+        foreach ($name in @('patch.ps1', 'restore.ps1', 'patch.bat', 'restore.bat', 'apply-stub.js', 'package.json')) {
+            $source = Join-Path $root $name
+            if (Test-Path -LiteralPath $source -PathType Leaf) {
+                Copy-Item -LiteralPath $source -Destination (Join-Path $Destination $name) -Force
+            }
+        }
+        foreach ($dirName in @('tools', 'i18n')) {
+            $sourceDir = Join-Path $root $dirName
+            if (Test-Path -LiteralPath $sourceDir -PathType Container) {
+                Copy-Item -LiteralPath $sourceDir -Destination (Join-Path $Destination $dirName) -Recurse -Force
+            }
+        }
+    }
+}
+
+function Add-MapEntry([string]$Path, [string]$Key, [string]$Value) {
+    $parsed = (Read-Utf8Strict $Path) | ConvertFrom-Json -AsHashtable
+    $entries = New-OrdinalDictionary
+    foreach ($existing in @($parsed.Keys)) {
+        $name = [string]$existing
+        if ($parsed[$existing] -isnot [string]) { continue }
+        $entries[$name] = [string]$parsed[$existing]
+    }
+    $entries[$Key] = $Value
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add('{') | Out-Null
+    $names = @($entries.Keys)
+    for ($i = 0; $i -lt $names.Count; $i++) {
+        $name = [string]$names[$i]
+        $comma = if ($i -lt ($names.Count - 1)) { ',' } else { '' }
+        $lines.Add(('  {0}: {1}{2}' -f ($name | ConvertTo-Json), ($entries[$name] | ConvertTo-Json), $comma)) | Out-Null
+    }
+    $lines.Add('}') | Out-Null
+    Write-Utf8NoBom $Path (($lines -join "`n") + "`n")
+}
+
 function Get-MapPath {
     $besidePatch = Join-Path (Split-Path -Parent $PatchScript) $Script:Contract.MapRelative
     if (Test-Path -LiteralPath $besidePatch -PathType Leaf) {
@@ -438,7 +501,6 @@ function Get-TranslationMap {
     $info = @{
         Path     = $path
         Present  = $false
-        Mutable  = $false
         Entries  = (New-OrdinalDictionary)
     }
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -460,9 +522,6 @@ function Get-TranslationMap {
     foreach ($key in @($parsed.Keys)) {
         $name = [string]$key
         $value = $parsed[$key]
-        if ($name -eq '_smokeMutable' -and [string]$value -eq 'true') {
-            $info.Mutable = $true
-        }
         if ($name.StartsWith('_')) { continue }
         if ($value -isnot [string]) { continue }
         $info.Entries[$name] = [string]$value
@@ -537,6 +596,31 @@ function Test-ContextAllowed([string]$Text, [string]$Kind) {
     return @($Script:Allowlist[$Text]) -contains $Kind
 }
 
+function Test-ProtectedArrayElement([string]$Text, $Literal) {
+    $before = $Text.Substring(0, $Literal.Start)
+    $after = $Text.Substring($Literal.End)
+    $prev = @(Get-JsTokens $before)
+    $next = @(Get-JsTokens $after)
+    $last = if ($prev.Count -gt 0) { [string]$prev[$prev.Count - 1] } else { '' }
+    $ahead = if ($next.Count -gt 0) { [string]$next[0] } else { '' }
+    $inArray = (($last -eq '[' -or $last -eq ',') -and ($ahead -eq ',' -or $ahead -eq ']'))
+    if (-not $inArray) { return $false }
+    $yaml = @('on', 'On', 'ON', 'off', 'Off', 'OFF')
+    if ($yaml -contains $Literal.Text) { return $true }
+    $open = $Text.LastIndexOf('[', $Literal.Start)
+    if ($open -lt 0) { return $false }
+    $prefixStart = [Math]::Max(0, $open - 16)
+    $prefix = $Text.Substring($prefixStart, $open - $prefixStart)
+    if ($prefix -match 'new\s+Set\s*\(\s*$') { return $true }
+    $close = $Text.IndexOf(']', $Literal.End)
+    if ($close -ge 0) {
+        $tailLength = [Math]::Min(20, $Text.Length - $close)
+        $tail = $Text.Substring($close, $tailLength)
+        if ($tail -match '^\]\s*\.\s*includes\b') { return $true }
+    }
+    return $false
+}
+
 function Get-LiteralKind([string]$Text, $Literal, $NlsMessages) {
     $before = $Text.Substring(0, $Literal.Start)
     $after = $Text.Substring($Literal.End)
@@ -546,9 +630,10 @@ function Get-LiteralKind([string]$Text, $Literal, $NlsMessages) {
     $ahead = if ($next.Count -gt 0) { [string]$next[0] } else { '' }
     $callee = if ($last -eq '(' -and $prev.Count -ge 2) { [string]$prev[$prev.Count - 2] } else { '' }
     $dangerous = $false
-    if ($last -in @('===', '!==', '==', '!=', 'case') -or $ahead -in @('===', '!==', '==', '!=')) { $dangerous = $true }
+    if ($last -in @('===', '!==', '==', '!=', 'case', '||', '&&') -or $ahead -in @('===', '!==', '==', '!=')) { $dangerous = $true }
     if ($last -eq '[' -and $ahead -eq ']') { $dangerous = $true }
-    if ($callee -in @('includes', 'get', 'has', 'indexOf', 'startsWith', 'endsWith') -or $callee -like 'publicLog*') { $dangerous = $true }
+    if ($callee -in @('includes', 'get', 'has', 'indexOf', 'startsWith', 'endsWith', 'fire') -or $callee -like 'publicLog*') { $dangerous = $true }
+    if (Test-ProtectedArrayElement $Text $Literal) { $dangerous = $true }
     if ($last -eq '=' -and $prev.Count -ge 3) {
         $beforeEq = [string]$prev[$prev.Count - 2]
         $beforeThat = [string]$prev[$prev.Count - 3]
@@ -1142,36 +1227,6 @@ try {
         Assert-SnapshotEqual $patched $patchedAgain '重复打补丁后整树哈希与第一次结果一致'
         Assert-PriorBackupIntact $backupBeforeRepeat (Get-InstallSnapshot $backup) '重复打补丁不覆盖已有备份' @('patch-report.json')
 
-        Write-Line '--- 词表扩充后再还原 ---'
-        $mapMutable = [bool]$mapInfo.Mutable
-        if ($mapMutable) {
-            $mapOriginal = Read-Utf8Strict $mapInfo.Path
-            try {
-                $expanded = ($mapOriginal | ConvertFrom-Json -AsHashtable)
-                $expanded['Smoke Extra Label'] = '冒烟扩充'
-                $lines = [System.Collections.Generic.List[string]]::new()
-                $lines.Add('{') | Out-Null
-                $keys = @($expanded.Keys)
-                for ($i = 0; $i -lt $keys.Count; $i++) {
-                    $key = [string]$keys[$i]
-                    $value = [string]$expanded[$key]
-                    $comma = if ($i -lt ($keys.Count - 1)) { ',' } else { '' }
-                    $lines.Add(('  {0}: {1}{2}' -f ($key | ConvertTo-Json), ($value | ConvertTo-Json), $comma)) | Out-Null
-                }
-                $lines.Add('}') | Out-Null
-                Write-Utf8NoBom $mapInfo.Path (($lines -join "`n") + "`n")
-                $backupBeforeExpand = Get-InstallSnapshot $backup
-                $expandRun = Invoke-UnderTest $PatchScript $install $backup
-                Add-Result ($expandRun.ExitCode -eq 0) '词表扩充后再次打补丁退出码为 0'
-                if ($expandRun.ExitCode -ne 0) { Write-ChildOutput $expandRun }
-                Assert-PriorBackupIntact $backupBeforeExpand (Get-InstallSnapshot $backup) '词表扩充后不覆盖旧备份' @('manifest.json')
-            } finally {
-                Write-Utf8NoBom $mapInfo.Path $mapOriginal
-            }
-        } else {
-            Write-Line '映射文件与补丁脚本不在同一可写目录，跳过追加词条，仍检查还原回到原始基线'
-        }
-
         Write-Line '--- 还原 ---'
         $restoredRun = Invoke-UnderTest $RestoreScript $install $backup
         Add-Result ($restoredRun.ExitCode -eq 0) '还原退出码为 0'
@@ -1180,6 +1235,48 @@ try {
         }
         $restored = Get-InstallSnapshot $install
         Assert-SnapshotEqual $baseline $restored '还原后整树哈希与原始基线一致'
+    }
+
+    Write-Line '--- 词表扩充后再还原 ---'
+    $kit = Join-Path $Script:WorkRoot 'kit-expand'
+    Copy-PatchKit $kit
+    $kitMap = Join-Path $kit 'i18n/zh-CN.json'
+    $kitPatch = Join-Path $kit 'patch.ps1'
+    $kitRestore = Join-Path $kit 'restore.ps1'
+    $sourceMap = Get-MapPath
+    $sourceMapHash = if (Test-Path -LiteralPath $sourceMap) { (Get-FileHash -LiteralPath $sourceMap -Algorithm SHA256).Hash } else { $null }
+    $repoMap = Join-Path $Script:RepoRoot $Script:Contract.MapRelative
+    $repoMapHash = if (Test-Path -LiteralPath $repoMap) { (Get-FileHash -LiteralPath $repoMap -Algorithm SHA256).Hash } else { $null }
+    Add-Result ((Test-Path -LiteralPath $kitMap) -and (Test-Path -LiteralPath $kitPatch) -and (Test-Path -LiteralPath $kitRestore)) '扩充场景已把脚本和词表复制到临时目录'
+    if ((Test-Path -LiteralPath $kitMap) -and (Test-Path -LiteralPath $kitPatch)) {
+        $expandInstall = Join-Path $Script:WorkRoot 'install-expand'
+        $expandBackup = Join-Path $Script:WorkRoot 'backup-expand'
+        New-FakeInstall $expandInstall
+        $expandBaseline = Get-InstallSnapshot $expandInstall
+        $expandFirst = Invoke-UnderTest $kitPatch $expandInstall $expandBackup
+        Add-Result ($expandFirst.ExitCode -eq 0) '扩充场景首次打补丁退出码为 0'
+        if ($expandFirst.ExitCode -ne 0) {
+            Write-ChildOutput $expandFirst
+        } else {
+            Add-MapEntry $kitMap 'Smoke Extra Label' '冒烟扩充'
+            $backupBeforeExpand = Get-InstallSnapshot $expandBackup
+            $expandRun = Invoke-UnderTest $kitPatch $expandInstall $expandBackup
+            Add-Result ($expandRun.ExitCode -eq 0) '词表扩充后再次打补丁退出码为 0'
+            if ($expandRun.ExitCode -ne 0) { Write-ChildOutput $expandRun }
+            Assert-PriorBackupIntact $backupBeforeExpand (Get-InstallSnapshot $expandBackup) '词表扩充后不覆盖旧备份' @('manifest.json', 'patch-report.json')
+            $glass = Read-Utf8Strict (Join-Under $expandInstall 'resources/app/out/vs/workbench/workbench.glass.main.js')
+            Add-Result (-not (Test-QuotedLiteral $glass 'Smoke Extra Label')) '扩充词条已替换展示用字面量'
+            $expandRestore = Invoke-UnderTest $kitRestore $expandInstall $expandBackup
+            Add-Result ($expandRestore.ExitCode -eq 0) '词表扩充后还原退出码为 0'
+            if ($expandRestore.ExitCode -ne 0) { Write-ChildOutput $expandRestore }
+            Assert-SnapshotEqual $expandBaseline (Get-InstallSnapshot $expandInstall) '词表扩充后还原回到原始基线'
+        }
+    }
+    if ($sourceMapHash) {
+        Add-Result ((Get-FileHash -LiteralPath $sourceMap -Algorithm SHA256).Hash -eq $sourceMapHash) '被测脚本旁的原始词表未被改写'
+    }
+    if ($repoMapHash) {
+        Add-Result ((Get-FileHash -LiteralPath $repoMap -Algorithm SHA256).Hash -eq $repoMapHash) '仓库内词表文件未被改写'
     }
 
     Write-Line '--- 其他版本仍打补丁 ---'
@@ -1246,6 +1343,8 @@ try {
         $upgradedTree = Get-InstallSnapshot $upgradeInstall
         $oldBackup = Get-InstallSnapshot $upgradeBackup
         $reuse = Invoke-UnderTest $PatchScript $upgradeInstall $upgradeBackup
+        Add-Result ($reuse.ExitCode -eq 0) '升级后再次打补丁退出码为 0'
+        if ($reuse.ExitCode -ne 0) { Write-ChildOutput $reuse }
         Assert-PriorBackupIntact $oldBackup (Get-InstallSnapshot $upgradeBackup) '升级后复用备份目录时不覆盖旧版备份'
         $reuseRestore = Invoke-UnderTest $RestoreScript $upgradeInstall $upgradeBackup
         $afterReuse = Get-InstallSnapshot $upgradeInstall
@@ -1273,10 +1372,10 @@ try {
         }
         $badBaseline = Get-InstallSnapshot $badInstall
         $badRun = Invoke-UnderTest $PatchScript $badInstall $badBackup
-        Add-Result ($badRun.ExitCode -ne 0) "$($case.Name) 时退出码非 0"
+        Add-Result ($badRun.ExitCode -eq 3) "$($case.Name) 时退出码为 3"
         $badOutput = Get-CombinedOutput $badRun
         Add-Result ($badOutput.Contains('版本')) "$($case.Name) 时输出说明版本问题"
-        if ($badRun.ExitCode -eq 0 -or -not $badOutput.Contains('版本')) {
+        if ($badRun.ExitCode -ne 3 -or -not $badOutput.Contains('版本')) {
             Write-ChildOutput $badRun
         }
         $badAfter = Get-InstallSnapshot $badInstall
