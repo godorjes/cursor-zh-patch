@@ -41,6 +41,7 @@ test('member assignments and subscripts stay English', () => {
   assert.equal(patch('e.Chat="Chat"'), 'e.Chat="Chat"');
   assert.equal(patch('e[e.Usage="Usage"]="Usage"'), 'e[e.Usage="Usage"]="Usage"');
   assert.equal(patch('o["Indexing"]'), 'o["Indexing"]');
+  assert.equal(patch('i.textContent="Accept"'), 'i.textContent="接受"');
 });
 
 test('in, includes/get, and publicLog stay English', () => {
@@ -87,6 +88,28 @@ test('command title rewrite stays inside the same object literal', () => {
     { allowlist: ALLOW }
   );
   assert.match(command.code, /title:\{value:"聊天",original:"Chat"\}/);
+});
+
+test('nested ternary colons are not object keys', () => {
+  const source = 'e.blocked||!e.enabled?e.blocked?e.error??`Blocked by admin`:`Disabled`:e.status';
+  const result = applyStringMap(source, { Disabled: '已禁用' }, {
+    allowlist: { Disabled: ['display'] },
+  });
+  assert.equal(result.code.includes('`已禁用`'), true);
+  assert.equal(result.code.includes('`Disabled`'), false);
+  const key = applyStringMap('const row = { "Disabled": true };', { Disabled: '已禁用' }, {
+    allowlist: { Disabled: ['display'] },
+  });
+  assert.equal(key.code, 'const row = { "Disabled": true };');
+});
+
+test('the same string is translated only at UI occurrences', () => {
+  const source = 'const name = n.trim() || "New Agent"; if (title === "New Agent") {}';
+  const result = applyStringMap(source, { 'New Agent': '新建 Agent' }, {
+    allowlist: { 'New Agent': ['display'] },
+  });
+  assert.equal(result.code.includes('|| "新建 Agent"'), true);
+  assert.equal(result.code.includes('=== "New Agent"'), true);
 });
 
 test('short strings outside the allowlist are not replaced', () => {

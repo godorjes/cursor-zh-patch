@@ -19,7 +19,8 @@ function writeApp(root, options) {
   fs.writeFileSync(path.join(root, 'out/vs/workbench/workbench.desktop.main.js'), desktop);
   fs.writeFileSync(path.join(root, 'out/vs/workbench/workbench.glass.main.js'), glass);
   fs.writeFileSync(path.join(root, 'out/nls.messages.json'), nls);
-  fs.writeFileSync(path.join(root, 'extensions/sample.js'), 'const leaked = "Settings";\n');
+  fs.writeFileSync(path.join(root, 'extensions/sample.js'), 'const leaked = "Settings";\nconst kind = { kind: "Apply" };\n');
+  fs.writeFileSync(path.join(root, 'out/nls.keys.json'), '["Marketplace"]\n');
   fs.writeFileSync(path.join(root, 'product.json'), JSON.stringify({
     version,
     commit,
@@ -107,12 +108,26 @@ test('a file that matches neither hash is refused before any write', () => {
   assert.equal(fs.readFileSync(desktop, 'utf8').includes('Settings'), true);
 });
 
-test('extensions outside the allowlist are not patched', () => {
+test('extensions and nls.keys.json stay byte-for-byte', () => {
   const { app, backup, mapPath, allowPath } = materialize('zh-scope-');
   const extension = path.join(app, 'extensions/sample.js');
-  const before = fs.readFileSync(extension);
+  const keys = path.join(app, 'out/nls.keys.json');
+  const beforeExt = fs.readFileSync(extension);
+  const beforeKeys = fs.readFileSync(keys);
   patchApp({ appRoot: app, backupDir: backup, mapPath, allowlistPath: allowPath });
-  assert.equal(fs.readFileSync(extension).equals(before), true);
+  assert.equal(fs.readFileSync(extension).equals(beforeExt), true);
+  assert.equal(fs.readFileSync(keys).equals(beforeKeys), true);
+  assert.equal(fs.readFileSync(keys, 'utf8').includes('"Marketplace"'), true);
+});
+
+test('a second patch does not rewrite patch-report.json', () => {
+  const { app, backup, mapPath, allowPath } = materialize('zh-report-');
+  patchApp({ appRoot: app, backupDir: backup, mapPath, allowlistPath: allowPath });
+  const reportPath = path.join(backup, 'patch-report.json');
+  const first = fs.readFileSync(reportPath);
+  assert.equal(first.includes(Buffer.from('backupPreserved')), false);
+  patchApp({ appRoot: app, backupDir: backup, mapPath, allowlistPath: allowPath });
+  assert.equal(fs.readFileSync(reportPath).equals(first), true);
 });
 
 test('missing or unreadable version exits as code 3', () => {

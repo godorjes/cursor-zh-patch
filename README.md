@@ -47,7 +47,7 @@ pwsh -NoProfile -File .\restore.ps1 -InstallPath F:\cursor\cursor -BackupDir D:\
 
 映射表里的替换是**整段字面量**：`"New Chat"` 会变成 `"新聊天"`，不会把 `"Apply {0} changes"` 里的 `Apply` 当成命中。键区分大小写，`"Sign in"` 和 `"Sign In"` 是两条。比较（左右都可以）、`switch case`、`对象.字段 = "..."`、下标、`in`、`includes` / `indexOf` / `startsWith` / `endsWith` / `get` / `has` / `set` / `delete`、`publicLog*`、以及 `type` / `name` / `kind` / `value` / `id` 和 `data-*` 的值，这些出现位置一律不改。
 
-一到两个词、且不含占位符的短句，只有写在 `i18n/short-allowlist.json` 里、并且上下文是界面文字、nls 原文参数或命令标题时才会替换。`On`、`Off`、`Local`、`Cloud`、`Usage`、`Enabled`、`Keep`、`Apply`、`Accept`、`General`、`Models` 目前不在允许表里，先留英文。用上面的 `export-contexts.js` 导出上下文，确认后再加进去。
+一到两个词、且不含占位符的短句，只有写在 `i18n/short-allowlist.json` 里、并且这一处是界面文字、nls 原文参数或命令标题时才会替换。比较、枚举赋值这类出现位置即使在允许表里也不改。`New Agent`、`Accept`、`General`、`Models`、`Local`、`Cloud`、`On`、`Off`、`Enabled`、`Disabled` 已按界面上下文放行。`Keep`、`Apply`、`Usage` 仍先留英文，等 `export-contexts.js` 的上下文复核后再加。
 
 成功时标准输出第一行固定是 `匹配报告: 命中=N 未命中=M`，下一行是 `跳过=K`。命中 = 实际替换掉的字面量次数 + 故意留在 nls `original` 参数或 `original:` 字段里的英文次数。跳过 = 危险上下文和没进允许表的短句出现次数，不算进命中。未命中 = 映射表里在这三个文件中一次完整字面量都没出现的条目数。同一条键可以既有命中也有跳过。
 

@@ -128,8 +128,8 @@ function propertyName(literal) {
 function isObjectKey(literal) {
   if (!literal.next || literal.next.value !== ':') return false;
   const last = literal.prev && literal.prev[literal.prev.length - 1];
-  if (last && last.value === '?') return false;
-  return true;
+  // Nested ternaries look like `: "Disabled" :`. A real key is `{ "Disabled":` or `, "Disabled":`.
+  return !!last && (last.value === '{' || last.value === ',');
 }
 
 function isComparison(literal) {
@@ -142,13 +142,17 @@ function isComparison(literal) {
   return false;
 }
 
-function isMemberAssignment(literal) {
+function isMemberAssignment(literal, decoded) {
   const prev = literal.prev || [];
   if (!prev.length || prev[prev.length - 1].value !== '=') return false;
   const left = prev[prev.length - 2];
   const dot = prev[prev.length - 3];
+  // e[e.Usage="Usage"]="Usage"
   if (left && left.value === ']') return true;
-  if (left && left.type === 'IdentifierName' && dot && (dot.value === '.' || dot.value === '?.')) return true;
+  // e.Chat="Chat" writes an enum member. i.textContent="Accept" is UI text.
+  if (left && left.type === 'IdentifierName' && dot && (dot.value === '.' || dot.value === '?.')) {
+    return left.value === decoded;
+  }
   return false;
 }
 
@@ -272,7 +276,7 @@ function classifyOccurrence(literal, decoded, nlsMessages, allowlist) {
   if (isFunctionalShape(decoded)) return { kind: 'token', reason: 'functional-shape' };
   if (isObjectKey(literal)) return { kind: 'token', reason: 'object-key' };
   if (isComparison(literal)) return { kind: 'token', reason: 'comparison' };
-  if (isMemberAssignment(literal)) return { kind: 'token', reason: 'member-assignment' };
+  if (isMemberAssignment(literal, decoded)) return { kind: 'token', reason: 'member-assignment' };
   if (isSubscript(literal)) return { kind: 'token', reason: 'subscript' };
   if (isInOperator(literal)) return { kind: 'token', reason: 'in-operator' };
   if (isBlockedCall(literal)) return { kind: 'token', reason: 'call' };

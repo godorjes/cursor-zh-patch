@@ -292,7 +292,13 @@ function patchApp(options) {
     commit: identity.commit,
   };
   if (changed.length || manifest) {
-    fs.writeFileSync(path.join(backupDir, 'patch-report.json'), JSON.stringify(report, null, 2));
+    const diskReport = Object.assign({}, report);
+    delete diskReport.backupPreserved;
+    const reportPath = path.join(backupDir, 'patch-report.json');
+    const body = JSON.stringify(diskReport, null, 2);
+    if (!fs.existsSync(reportPath) || fs.readFileSync(reportPath, 'utf8') !== body) {
+      fs.writeFileSync(reportPath, body);
+    }
   }
   return report;
 }
