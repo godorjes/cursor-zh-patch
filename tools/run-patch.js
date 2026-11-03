@@ -8,8 +8,7 @@ function parseArgs(argv) {
   const out = {};
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--force') out.force = true;
-    else if (arg.startsWith('--')) out[arg.slice(2)] = argv[++i];
+    if (arg.startsWith('--')) out[arg.slice(2)] = argv[++i];
   }
   return out;
 }

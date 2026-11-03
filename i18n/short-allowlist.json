@@ -1,5 +1,5 @@
 {
-  "_comment": "1-2 word glossary strings may be replaced only in these contexts. Comparison, enum assignment, subscript, in, includes/get/publicLog, and data-* values are never replaced, even if listed here.",
+  "_comment": "Kept for compatibility. Short strings are no longer gated by this file. They are replaced only in explicit UI positions; a comparison, lookup, array, or enum use in the same file poisons every other non-UI occurrence.",
   "Chat": ["display", "nls-original", "command-title"],
   "Chats": ["display", "nls-original", "command-title"],
   "Settings": ["display", "nls-original", "command-title"],

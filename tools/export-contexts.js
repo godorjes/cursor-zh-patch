@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { collectLiterals, classifyOccurrence, decodeLiteral } = require('./lib/literals');
+const { planOccurrences } = require('./lib/literals');
 const { loadMap, loadAllowlist, PATCH_FILES } = require('./lib/apply');
 
 function parseArgs(argv) {
@@ -43,21 +43,19 @@ function main() {
     const abs = path.join(args.app, rel);
     if (!fs.existsSync(abs)) continue;
     const source = fs.readFileSync(abs, 'utf8');
-    for (const literal of collectLiterals(source)) {
-      let decoded;
-      try {
-        decoded = decodeLiteral(source, literal);
-      } catch {
-        continue;
-      }
-      if (!Object.prototype.hasOwnProperty.call(map, decoded)) continue;
-      const classified = classifyOccurrence(literal, decoded, nlsMessages, allowlist);
+    const planned = planOccurrences(source, map, {
+      nlsMessages,
+      allowlist,
+      catalog: rel === 'out/nls.messages.json',
+    });
+    for (const item of planned) {
       hits.push({
         file: rel,
-        key: decoded,
-        kind: classified.kind,
-        reason: classified.reason,
-        excerpt: excerpt(source, literal.start, literal.end),
+        key: item.decoded,
+        kind: item.final.kind,
+        reason: item.final.reason,
+        poisoned: item.poisoned,
+        excerpt: excerpt(source, item.literal.start, item.literal.end),
       });
     }
   }

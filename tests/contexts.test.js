@@ -61,8 +61,9 @@ test('data-* and id-like property values stay English', () => {
   assert.equal(patch('{type:"Chat",name:"Chat",kind:"Chat",id:"Chat"}'), '{type:"Chat",name:"Chat",kind:"Chat",id:"Chat"}');
 });
 
-test('a plain display literal of the same word is still translated', () => {
-  assert.equal(patch('const label = "Settings"'), 'const label = "设置"');
+test('a short word is translated on a UI property and skipped as a plain initializer', () => {
+  assert.equal(patch('const row = {label:"Settings"}'), 'const row = {label:"设置"}');
+  assert.equal(patch('const label = "Settings"'), 'const label = "Settings"');
 });
 
 test('Apply is not a hit inside a longer literal', () => {
@@ -71,11 +72,9 @@ test('Apply is not a hit inside a longer literal', () => {
 });
 
 test('Sign in and Sign In are different keys', () => {
-  const source = 'const a = "Sign in"; const b = "Sign In";';
-  const result = applyStringMap(source, { 'Sign in': '登录' }, {
-    allowlist: { 'Sign in': ['display'] },
-  });
-  assert.equal(result.code, 'const a = "登录"; const b = "Sign In";');
+  const source = 'const row = {label:"Sign in", title:"Sign In"};';
+  const result = applyStringMap(source, { 'Sign in': '登录' }, {});
+  assert.equal(result.code, 'const row = {label:"登录", title:"Sign In"};');
 });
 
 test('command title rewrite stays inside the same object literal', () => {
@@ -103,19 +102,20 @@ test('nested ternary colons are not object keys', () => {
   assert.equal(key.code, 'const row = { "Disabled": true };');
 });
 
-test('the same string is translated only at UI occurrences', () => {
-  const source = 'const name = n.trim() || "New Agent"; if (title === "New Agent") {}';
-  const result = applyStringMap(source, { 'New Agent': '新建 Agent' }, {
-    allowlist: { 'New Agent': ['display'] },
-  });
-  assert.equal(result.code.includes('|| "新建 Agent"'), true);
+test('a comparison in the same file poisons fallbacks and still translates a label', () => {
+  const source = 'const name = n.trim() || "New Agent"; if (title === "New Agent") {} const row = {label:"New Agent"};';
+  const result = applyStringMap(source, { 'New Agent': '新建 Agent' }, {});
+  assert.equal(result.code.includes('|| "New Agent"'), true);
   assert.equal(result.code.includes('=== "New Agent"'), true);
+  assert.equal(result.code.includes('label:"新建 Agent"'), true);
 });
 
-test('short strings outside the allowlist are not replaced', () => {
+test('a short word outside an explicit UI position is skipped', () => {
   const source = 'const label = "Apply";';
   const result = applyStringMap(source, { Apply: '应用' }, { allowlist: {} });
   assert.equal(result.code, source);
   assert.equal(result.stats.skippedOccurrences, 1);
   assert.equal(result.stats.replaced, 0);
+  const ui = applyStringMap('const row = {label:"Apply"};', { Apply: '应用' }, {});
+  assert.equal(ui.code, 'const row = {label:"应用"};');
 });

@@ -45,11 +45,11 @@ pwsh -NoProfile -File .\restore.ps1 -InstallPath F:\cursor\cursor -BackupDir D:\
 
 只改这三个文件：`out/vs/workbench/workbench.desktop.main.js`、`out/vs/workbench/workbench.glass.main.js`、`out/nls.messages.json`。`extensions/` 和其他脚本不动。
 
-映射表里的替换是**整段字面量**：`"New Chat"` 会变成 `"新聊天"`，不会把 `"Apply {0} changes"` 里的 `Apply` 当成命中。键区分大小写，`"Sign in"` 和 `"Sign In"` 是两条。比较（左右都可以）、`switch case`、`对象.字段 = "..."`、下标、`in`、`includes` / `indexOf` / `startsWith` / `endsWith` / `get` / `has` / `set` / `delete`、`publicLog*`、以及 `type` / `name` / `kind` / `value` / `id` 和 `data-*` 的值，这些出现位置一律不改。
+映射表里的替换是**整段字面量**：`"New Chat"` 会变成 `"新聊天"`，不会把 `"Apply {0} changes"` 里的 `Apply` 当成命中。键区分大小写，`"Sign in"` 和 `"Sign In"` 是两条。比较（左右都可以）、`switch case`、`===("Chat")` 这种括号、下标、`in`、`includes` / `indexOf` / `startsWith` / `endsWith` / `get` / `has` / `set` / `delete` / `fire`、`publicLog*`、数组和 `Set`、`type` / `kind` / `id` 以及 `data-*` 的值，这些出现位置一律不改。
 
-一到两个词、且不含占位符的短句，只有写在 `i18n/short-allowlist.json` 里、并且这一处是界面文字、nls 原文参数或命令标题时才会替换。比较、枚举赋值这类出现位置即使在允许表里也不改。`New Agent`、`Accept`、`General`、`Models`、`Local`、`Cloud`、`On`、`Off`、`Enabled`、`Disabled` 已按界面上下文放行。`Keep`、`Apply`、`Usage` 仍先留英文，等 `export-contexts.js` 的上下文复核后再加。
+一到两个词、且不含占位符的短句，只在这些位置替换：`label`、`title`、`children`、`aria-label`、`tooltip`、`placeholder`、`description`、`hintText`、`textContent`、审查栏按钮 `accept` / `reject`，以及 `fallback`、`actionTitle`、`defaultLabel`；还有本地化默认文案 `k(n, null, "X")`、`k(n, "X")`、`N("key", "X")`。`title:{value, original}` 里的 `value` 会译，`original` 和命令 `alias` 留英文。其余位置默认跳过。同一个文件里只要这个短词出现在比较、查找、数组或枚举赋值中，同文件里的三元、`||`、变量初值，以及带图标的 `name` 菜单项也不再替换；上面列出的界面属性和本地化默认文案仍然替换。`nls.messages.json` 的数组元素按文案目录处理。
 
-成功时标准输出第一行固定是 `匹配报告: 命中=N 未命中=M`，下一行是 `跳过=K`。命中 = 实际替换掉的字面量次数 + 故意留在 nls `original` 参数或 `original:` 字段里的英文次数。跳过 = 危险上下文和没进允许表的短句出现次数，不算进命中。未命中 = 映射表里在这三个文件中一次完整字面量都没出现的条目数。同一条键可以既有命中也有跳过。
+成功时标准输出第一行固定是 `匹配报告: 命中=N 未命中=M`，下一行是 `跳过=K`。命中 = 实际替换掉的字面量次数 + 故意留在 nls `original` 参数、`original:` 或 `alias` 字段里的英文次数。跳过 = 危险上下文、默认跳过的短句，以及被同文件查找投毒的出现次数，不算进命中。未命中 = 映射表里在这三个文件中一次完整字面量都没出现的条目数。同一条键可以既有命中也有跳过。
 
 VS Code 核心界面靠官方语言包和 `locale=zh-cn`。Cursor 自己的字符串有两条路：
 
@@ -89,11 +89,11 @@ VS Code 核心界面靠官方语言包和 `locale=zh-cn`。Cursor 自己的字�
 - 这是在改安装目录里的程序文件。语法检查失败会中止，并且不会留下半套补丁；已经成功的补丁可以用 `restore.ps1` 还原
 - 自动更新会换掉这些文件，补丁失效，需要按上面的步骤重做
 - 官方语言包翻译的是 VS Code 核心文案，和本表在个别词上可能不完全一样。Cursor 专有字符串以 `docs/glossary.md` 为准
-- `Accept`、`New Agent`、`General`、`Models` 等在 3.27.22 里同时被当成界面文字和功能 token，脚本整条保留英文。见下方实测
+- 短词在比较、枚举、数组里出现时，同文件的非界面位置会整段跳过。`label` / `title` / 按钮文案仍会翻译，所以同一个词可以一边是中文按钮、一边是英文枚举
 
 ## 3.27.22 实测（Linux 官方包，与 Windows 同一套 workbench 资源）
 
-包：`Cursor 3.27.22`，commit `b1aa50cb6db84fd3e8c808259cb172ea73425c10`，vscode `1.128.0`。在解包后的 `resources/app` 上跑过打补丁、再打一次、还原。`node --check` 通过，`workbench.desktop.main.js` 的校验和与 `product.json` 一致。没有把这台机器上的图形界面点开，最终界面要在 Windows 上确认。
+包：`Cursor 3.27.22`，commit `b1aa50cb6db84fd3e8c808259cb172ea73425c10`，vscode `1.128.0`。在解包后的 `resources/app` 上跑过打补丁、再打一次、还原。两次报告都是 `命中=490 未命中=5 跳过=341`。`node --check` 通过，`workbench.desktop.main.js` 的校验和与 `product.json` 一致。没有把这台机器上的图形界面点开，最终界面要在 Windows 上确认。
 
 - **Rules for AI**：desktop、glass、`nls.messages.json` 里都没有这句。3.27.22 已不存在这条设置名
 - **Notepads**：没有独立的 `"Notepads"` 字面量。还留着开发者命令 `Export Notepads to Files`、能力开关 `supportsNotepads`，以及协议字段。它不再是一块主要界面
@@ -101,13 +101,16 @@ VS Code 核心界面靠官方语言包和 `locale=zh-cn`。Cursor 自己的字�
 - **Memories**：有一条界面标签 `"Memories"`，已译为“记忆”。其余大量 `Memory` 是协议名，不是界面文案
 - **命令面板英文搜索**：`De` / `It`（localize2）注册的命令会把英文留在调用参数里，显示走翻译后的 nls。注册表用 `original` 做 `alias`，命令面板同时匹配 label 和 alias，因此这类命令打补丁后仍可用英文搜索。直接用 `title:k(索引, null)` 的命令只有一条运行时字符串；若该字符串被译成中文，英文别名不会自动出现。3.27.22 里大量命令走的是 localize2。这一点没有在图形界面里点过命令面板
 
-同一次实跑还跳过了这些“显示 + token”字符串（保持英文）：`Accept`、`New Agent`、`General`、`Models`、`Off`、`Disabled`、`Local`、`Cloud`、`Subagents`、`Hooks`。
+界面位置会翻译，逻辑位置留英文。审查栏 `accept:"Keep"` 译为「保留」，`reject:"Undo"` 译为「撤销」。`label` / `title` / `children` 上的 Apply、Hooks、Subagents，以及没有被比较或查找拖住的 Usage 回退文案，都会翻译。`document.designMode`、YAML 布尔表、`type:"Local"`、`case"Local"`、扩展分类数组和 `indexOf` 留英文。
+
+`name:"New Agent"` 是带图标的菜单项，文件里没有拿这句做比较或查找，会译成「新建 Agent」。`name:"Cloud"` 同一文件里有 `searchKeywords:["Cloud",…]`，菜单名留英文，`label:"Cloud"` 仍译成「云端」。`title:{value:"New Chat",original:"New Chat"}` 只译 `value`。
+
+3.27.22 里没有完整字面量、已移出本版本 P0 分母的句子：`Accept All`、`Reject All`、`Accept File`、`Reject File`、`User Rules`、`MCP Tools`、`Codebase Indexing`、`Indexing`、`Checkpoint`、`View Diff`、`Log out`。包里的实际写法是 `Accept All Changes from Left` / `Right`、`Reject All Edits`、`Cursor & User Rules`、`View User Rules`、`Migrated User Rules`、`MCP Tools Protection`、`Log Out`。
 
 ## 开发
 
 ```powershell
 node --test tests/*.test.js
-pwsh -NoProfile -File .\tests\smoke.ps1
 ```
 
-冒烟在临时假安装上检查退出码、整树哈希、还原、校验和、UTF-8 无 BOM，以及术语表里的样例句子。它不会碰 `F:\cursor\cursor`。
+安装冒烟在 PR #2 的 `tests/smoke.ps1`。本分支的测试覆盖字面量分类、备份和还原。

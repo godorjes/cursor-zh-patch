@@ -12,8 +12,7 @@ const DESKTOP = `
 function De(index, message) { return { value: message, original: message }; }
 const open = De(0, "Open Cursor Settings");
 const command = { id: "cursor.sample", title: "Register Close Tooltip", category: "Tooltip", f1: true };
-const label = "Save";
-const longer = "Accept All";
+const row = { label: "Save", title: "Accept All" };
 function getData(name) { return name; }
 getData("Terminals");
 const menuLabel = "Terminals";
@@ -28,7 +27,7 @@ const untouched = "Not Save";
 const GLASS = `
 function It(index, message) { return { value: message, original: message }; }
 const open = It(0, "Open Cursor Settings");
-const label = "Save";
+const label = {label:"Save"};
 `;
 
 const NLS = [
@@ -116,8 +115,11 @@ test('patch is idempotent, syntax-clean, and restores the clean backup', () => {
   assert.equal(backupDesktopHash, sha256Hex(originalDesktop));
   assert.equal(first.backupPreserved, false);
   assert.equal(patchedDesktop.includes('De(0, "Open Cursor Settings")'), true);
-  assert.equal(patchedDesktop.includes('const label = "保存"'), true);
-  assert.equal(patchedDesktop.includes('全部接受'), true);
+  assert.equal(patchedDesktop.includes('label: "保存"'), true);
+  assert.equal(patchedDesktop.includes('title: "全部接受"'), true);
+  const manifest = JSON.parse(fs.readFileSync(path.join(backup, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.files['out/vs/workbench/workbench.desktop.main.js'].sha256, sha256Hex(originalDesktop));
+  assert.equal(manifest.files['out/vs/workbench/workbench.desktop.main.js'].patchedSha256, sha256Hex(patchedDesktop));
   assert.equal(patchedDesktop.includes('"终端"'), false);
   assert.equal(patchedDesktop.includes('getData("Terminals")'), true);
   assert.equal(patchedDesktop.includes('const untouched = "Not Save"'), true);

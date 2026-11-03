@@ -31,14 +31,14 @@ test('placeholder and glossary guards', () => {
 });
 
 test('replacement is whole-literal only and keeps quote style', () => {
-  const source = 'const a = "Save"; const b = "Accept All"; const c = \'Save\'; const d = `Save`;';
+  const source = 'const a = {label:"Save"}; const b = "Accept All"; const c = {label:\'Save\'}; const d = {label:`Save`};';
   const result = applyStringMap(source, { Save: '保存' }, { allowlist: SHORT });
-  assert.equal(result.code, 'const a = "保存"; const b = "Accept All"; const c = \'保存\'; const d = `保存`;');
+  assert.equal(result.code, 'const a = {label:"保存"}; const b = "Accept All"; const c = {label:\'保存\'}; const d = {label:`保存`};');
   assert.equal(result.stats.replaced, 3);
 });
 
 test('template with interpolation is not rewritten', () => {
-  const source = 'const a = `Save ${name}`; const b = `Save`;';
+  const source = 'const a = `Save ${name}`; const b = {label:`Save`};';
   const result = applyStringMap(source, { Save: '保存', 'Save ${name}': '保存 ${name}' }, { allowlist: SHORT });
   assert.equal(result.code.includes('`Save ${name}`'), true);
   assert.equal(result.code.includes('`保存`'), true);
@@ -50,7 +50,7 @@ test('object keys, comparisons, and getData tokens block the whole key', () => {
     'getData("Terminals");',
     'const mode = value === "Agent" ? "Agent" : "Ask";',
     'const table = { "Mode": 1 };',
-    'const ok = "Save";',
+    'const ok = {label:"Save"};',
   ].join('\n');
   const result = applyStringMap(source, {
     Terminals: '终端',
@@ -59,7 +59,7 @@ test('object keys, comparisons, and getData tokens block the whole key', () => {
     Save: '保存',
   }, { allowlist: SHORT });
   assert.equal(result.code.includes('"终端"'), false);
-  assert.equal(result.code.includes('const ok = "保存"'), true);
+  assert.equal(result.code.includes('const ok = {label:"保存"}'), true);
   assert.equal(result.code.includes('"Agent"'), true);
   assert.equal(result.code.includes('"Mode"'), true);
   assert.deepEqual(
@@ -85,23 +85,23 @@ test('plain command titles keep an English original alias', () => {
   assert.equal(result.code.includes('f1:!0'), true);
 });
 
-test('explicit original fields are not translated', () => {
+test('localize2 value is translated and original stays English', () => {
   const source = 'const title = {value:"Save",original:"Save"};';
   const result = applyStringMap(source, { Save: '保存' }, { allowlist: SHORT });
-  assert.equal(result.code, source);
+  assert.equal(result.code, 'const title = {value:"保存",original:"Save"};');
   assert.equal(result.stats.originalFieldKept, 1);
-  assert.equal(result.stats.skippedOccurrences >= 1, true);
+  assert.equal(result.stats.replaced, 1);
 });
 
 test('regex literals are not treated as strings', () => {
-  const source = 'const re = /"Save"/g; const label = "Save";';
+  const source = 'const re = /"Save"/g; const row = {label:"Save"};';
   const result = applyStringMap(source, { Save: '保存' }, { allowlist: SHORT });
-  assert.equal(result.code, 'const re = /"Save"/g; const label = "保存";');
+  assert.equal(result.code, 'const re = /"Save"/g; const row = {label:"保存"};');
 });
 
 test('chinese replacement is escaped for the host quote', () => {
-  const source = 'const a = "Say \\"hi\\"";';
+  const source = 'const a = {label:"Say \\"hi\\""};';
   const result = applyStringMap(source, { 'Say "hi"': '说"嗨"' }, { allowlist: { 'Say "hi"': ['display'] } });
-  assert.equal(result.code, 'const a = "说\\"嗨\\"";');
+  assert.equal(result.code, 'const a = {label:"说\\"嗨\\""};');
   assert.equal(require('../tools/lib/strings').decodeJsString('"说\\"嗨\\""'), '说"嗨"');
 });

@@ -23,6 +23,29 @@ const TOKEN_PROPS = new Set([
   'value',
 ]);
 
+// Short glossary words are replaced only in these positions. accept/reject are the
+// review-bar button labels (accept:"Keep"). fallback, actionTitle and defaultLabel
+// are the visible title/button fallbacks next to title/label.
+const UI_PROPS = new Set([
+  'label',
+  'title',
+  'children',
+  'aria-label',
+  'ariaLabel',
+  'tooltip',
+  'placeholder',
+  'description',
+  'hintText',
+  'textContent',
+  'accept',
+  'reject',
+  'fallback',
+  'actionTitle',
+  'defaultLabel',
+]);
+
+const MENU_HINTS = new Set(['icon', 'shortcutLabel', 'searchAliases']);
+
 const CALL_CALLEES = new Set([
   'getData',
   'setData',
@@ -39,6 +62,7 @@ const CALL_CALLEES = new Set([
   'has',
   'set',
   'delete',
+  'fire',
 ]);
 
 const COMPARE_OPS = new Set(['==', '===', '!=', '!==']);
@@ -87,7 +111,7 @@ function collectLiterals(source) {
         start,
         end: offset,
         quote: token.value[0],
-        prev: recent.slice(-12),
+        prev: recent.slice(-32),
         next: null,
         tokenIndex: tokens.length - 1,
         tokens,
@@ -96,7 +120,7 @@ function collectLiterals(source) {
 
     if (significant) {
       recent.push(brief(token));
-      if (recent.length > 16) recent.shift();
+      if (recent.length > 36) recent.shift();
     }
   }
 
@@ -133,27 +157,32 @@ function isObjectKey(literal) {
 }
 
 function isComparison(literal) {
-  const prev = literal.prev && literal.prev[literal.prev.length - 1];
+  const prev = literal.prev || [];
+  const last = prev[prev.length - 1];
   const next = literal.next;
-  if (prev && (COMPARE_OPS.has(prev.value) || (prev.type === 'IdentifierName' && prev.value === 'case'))) {
+  if (last && (COMPARE_OPS.has(last.value) || (last.type === 'IdentifierName' && last.value === 'case'))) {
     return true;
   }
   if (next && COMPARE_OPS.has(next.value)) return true;
+  // ===("Chat") wraps the operand in parens.
+  if (last && last.value === '(' && next && next.value === ')') {
+    const op = prev[prev.length - 2];
+    if (op && COMPARE_OPS.has(op.value)) return true;
+  }
   return false;
 }
 
-function isMemberAssignment(literal, decoded) {
+function assignedProperty(literal) {
   const prev = literal.prev || [];
-  if (!prev.length || prev[prev.length - 1].value !== '=') return false;
+  if (!prev.length || prev[prev.length - 1].value !== '=') return null;
   const left = prev[prev.length - 2];
   const dot = prev[prev.length - 3];
   // e[e.Usage="Usage"]="Usage"
-  if (left && left.value === ']') return true;
-  // e.Chat="Chat" writes an enum member. i.textContent="Accept" is UI text.
+  if (left && left.value === ']') return { token: true };
   if (left && left.type === 'IdentifierName' && dot && (dot.value === '.' || dot.value === '?.')) {
-    return left.value === decoded;
+    return { name: left.value };
   }
-  return false;
+  return null;
 }
 
 function isSubscript(literal) {
@@ -169,19 +198,137 @@ function isInOperator(literal) {
   return false;
 }
 
-function calleeName(literal) {
+function callOf(literal) {
   const prev = literal.prev || [];
-  if (!prev.length || prev[prev.length - 1].value !== '(') return null;
-  const name = prev[prev.length - 2];
-  if (!name || name.type !== 'IdentifierName') return null;
-  return name.value;
+  let depth = 0;
+  let commas = 0;
+  for (let i = prev.length - 1; i >= 0; i--) {
+    const tok = prev[i];
+    if (tok.value === ')' || tok.value === ']' || tok.value === '}') depth++;
+    else if (tok.value === '(' || tok.value === '[' || tok.value === '{') {
+      if (depth === 0) {
+        if (tok.value !== '(') return null;
+        const name = prev[i - 1];
+        if (!name || name.type !== 'IdentifierName') return null;
+        const dot = prev[i - 2];
+        const member = !!(dot && (dot.value === '.' || dot.value === '?.'));
+        return { name: name.value, index: commas, member };
+      }
+      depth--;
+    } else if (depth === 0 && tok.value === ',') commas++;
+    else if (depth === 0 && (tok.value === '=>' || tok.value === ';')) return null;
+  }
+  return null;
 }
 
-function isBlockedCall(literal) {
-  const name = calleeName(literal);
-  if (!name) return false;
-  if (CALL_CALLEES.has(name)) return true;
-  return /^publicLog/i.test(name);
+function isBlockedCallee(call) {
+  if (!call) return false;
+  if (CALL_CALLEES.has(call.name)) return true;
+  return /^publicLog/i.test(call.name);
+}
+
+function isLocalizationDefault(call) {
+  if (!call || call.member) return false;
+  if (call.name === 'N' && call.index === 1) return true;
+  if (call.name === 'k' && call.index >= 1) return true;
+  return false;
+}
+
+function propNameAt(prev, index) {
+  const name = prev[index - 1];
+  const before = prev[index - 2];
+  if (!name || !before || name.type !== 'IdentifierName') return null;
+  if (before.value === '{' || before.value === ',' || before.value === '(') return name.value;
+  return null;
+}
+
+function uiAncestor(literal) {
+  const prev = literal.prev || [];
+  let depth = 0;
+  for (let i = prev.length - 1; i >= 0; i--) {
+    const tok = prev[i];
+    if (tok.value === ')' || tok.value === ']' || tok.value === '}') {
+      depth++;
+      continue;
+    }
+    if (tok.value === '(' || tok.value === '[' || tok.value === '{') {
+      if (depth === 0) {
+        if (tok.value === '{') {
+          const close = prev[i - 1];
+          const open = prev[i - 2];
+          const name = prev[i - 3];
+          const get = prev[i - 4];
+          if (close && close.value === ')' && open && open.value === '(' && name && name.type === 'IdentifierName' && get && get.value === 'get' && UI_PROPS.has(name.value)) {
+            return name.value;
+          }
+          return null;
+        }
+        if (tok.value === '[') {
+          const colon = prev[i - 1];
+          if (colon && colon.value === ':') {
+            const name = propNameAt(prev, i - 1);
+            if (name && UI_PROPS.has(name)) return name;
+          }
+          return null;
+        }
+        continue;
+      }
+      depth--;
+      continue;
+    }
+    if (depth !== 0) continue;
+    if (tok.value === ',' || tok.value === ';') return null;
+    if (tok.value === ':') {
+      const name = propNameAt(prev, i);
+      if (name && UI_PROPS.has(name)) return name;
+      if (name) return null;
+    }
+  }
+  return null;
+}
+
+function isArrayElement(literal) {
+  const prev = literal.prev || [];
+  const last = prev[prev.length - 1];
+  const next = literal.next;
+  if (!last || !next) return false;
+  return (last.value === '[' || last.value === ',') && (next.value === ',' || next.value === ']');
+}
+
+function isTernaryOrReturn(literal) {
+  if (propertyName(literal)) return false;
+  const prev = literal.prev || [];
+  const last = prev[prev.length - 1];
+  const next = literal.next;
+  if (last && last.value === 'return') return true;
+  if (last && (last.value === '?' || last.value === ':')) return true;
+  if (next && (next.value === '?' || next.value === ':')) return true;
+  return false;
+}
+
+function siblingNames(literal) {
+  const span = enclosingObject(literal, 500);
+  const names = new Set();
+  if (!span) return names;
+  let depth = 0;
+  for (let i = span.start; i <= span.end; i++) {
+    const token = span.tokens[i];
+    if (!token.significant) continue;
+    if (token.value === '{') {
+      depth++;
+      continue;
+    }
+    if (token.value === '}') {
+      depth--;
+      continue;
+    }
+    if (depth !== 1 || token.type !== 'IdentifierName') continue;
+    let j = i + 1;
+    while (j <= span.end && !span.tokens[j].significant) j++;
+    const next = span.tokens[j];
+    if (next && (next.value === ':' || next.value === '(')) names.add(token.value);
+  }
+  return names;
 }
 
 function isNlsOriginal(literal, decoded, nlsMessages) {
@@ -200,14 +347,16 @@ function isNlsOriginal(literal, decoded, nlsMessages) {
   return nlsMessages[index] === decoded;
 }
 
-function enclosingObject(literal) {
+function enclosingObject(literal, limit = 800) {
   const tokens = literal.tokens;
   if (!tokens || literal.tokenIndex == null) return null;
   let depth = 0;
   let open = -1;
-  for (let i = literal.tokenIndex; i >= 0; i--) {
+  let steps = 0;
+  for (let i = literal.tokenIndex; i >= 0 && steps < limit; i--) {
     const token = tokens[i];
     if (!token.significant) continue;
+    steps++;
     if (token.value === '}') depth++;
     else if (token.value === '{') {
       if (depth === 0) {
@@ -266,35 +415,70 @@ function isIdLikeProperty(literal) {
   return name.startsWith('data-');
 }
 
-function contextAllowed(decoded, kind, allowlist) {
-  if (!isShortString(decoded)) return true;
-  const contexts = allowlist && allowlist[decoded];
-  return Array.isArray(contexts) && contexts.includes(kind);
+function isJsonArrayElement(literal) {
+  const prev = literal.prev || [];
+  const last = prev[prev.length - 1];
+  const next = literal.next;
+  if (!last || !next) return false;
+  return (last.value === '[' || last.value === ',') && (next.value === ',' || next.value === ']');
 }
 
-function classifyOccurrence(literal, decoded, nlsMessages, allowlist) {
+function classifyOccurrence(literal, decoded, nlsMessages, options = {}) {
+  const catalog = !!(options && options.catalog);
+  const short = isShortString(decoded);
+  if (catalog && isJsonArrayElement(literal)) return { kind: 'display', reason: 'catalog' };
   if (isFunctionalShape(decoded)) return { kind: 'token', reason: 'functional-shape' };
   if (isObjectKey(literal)) return { kind: 'token', reason: 'object-key' };
   if (isComparison(literal)) return { kind: 'token', reason: 'comparison' };
-  if (isMemberAssignment(literal, decoded)) return { kind: 'token', reason: 'member-assignment' };
   if (isSubscript(literal)) return { kind: 'token', reason: 'subscript' };
   if (isInOperator(literal)) return { kind: 'token', reason: 'in-operator' };
-  if (isBlockedCall(literal)) return { kind: 'token', reason: 'call' };
+
+  const assigned = assignedProperty(literal);
+  if (assigned && assigned.token) return { kind: 'token', reason: 'member-assignment' };
+  if (assigned && assigned.name && UI_PROPS.has(assigned.name)) {
+    return { kind: 'display', reason: 'ui-property' };
+  }
+  if (assigned && assigned.name && (short || assigned.name === decoded)) {
+    return { kind: 'token', reason: 'member-assignment' };
+  }
+
+  const call = callOf(literal);
+  if (isBlockedCallee(call)) return { kind: 'token', reason: 'call' };
+  if (isLocalizationDefault(call)) return { kind: 'display', reason: 'localization-default' };
+  if (isNlsOriginal(literal, decoded, nlsMessages)) return { kind: 'nls-original', reason: 'nls-original' };
+  if (call && short) return { kind: 'token', reason: 'call' };
+
+  const prop = propertyName(literal);
+  if (prop === 'original' || prop === 'alias') return { kind: 'original', reason: prop === 'alias' ? 'alias-field' : 'original-field' };
+  if (prop === 'value' && siblingNames(literal).has('original')) return { kind: 'display', reason: 'localize-value' };
+
+  const ui = prop && UI_PROPS.has(prop) ? prop : uiAncestor(literal);
+  if (ui) {
+    if (ui === 'title' && isCommandTitle(literal)) return { kind: 'command-title', reason: 'command-title' };
+    return { kind: 'display', reason: 'ui-property' };
+  }
+  if (prop === 'name' && short && [...MENU_HINTS].some((hint) => siblingNames(literal).has(hint))) {
+    return { kind: 'menu-name', reason: 'menu-name' };
+  }
   if (isIdLikeProperty(literal)) return { kind: 'token', reason: 'id-like-property' };
-  if (propertyName(literal) === 'original') {
-    if (!contextAllowed(decoded, 'nls-original', allowlist)) return { kind: 'held', reason: 'short-not-allowlisted' };
-    return { kind: 'original', reason: 'original-field' };
+
+  if (short) {
+    if (isArrayElement(literal)) return { kind: 'token', reason: 'array-element' };
+    if (prop) return { kind: 'held', reason: 'non-ui-property' };
+    if (isTernaryOrReturn(literal)) return { kind: 'soft', reason: 'ternary-or-return' };
+    return { kind: 'held', reason: 'short-default-skip' };
   }
-  if (isNlsOriginal(literal, decoded, nlsMessages)) {
-    if (!contextAllowed(decoded, 'nls-original', allowlist)) return { kind: 'held', reason: 'short-not-allowlisted' };
-    return { kind: 'nls-original', reason: 'nls-original' };
-  }
-  if (isCommandTitle(literal)) {
-    if (!contextAllowed(decoded, 'command-title', allowlist)) return { kind: 'held', reason: 'short-not-allowlisted' };
-    return { kind: 'command-title', reason: 'command-title' };
-  }
-  if (!contextAllowed(decoded, 'display', allowlist)) return { kind: 'held', reason: 'short-not-allowlisted' };
   return { kind: 'display', reason: 'display' };
+}
+
+function finalizeClass(classified, poisoned) {
+  if (poisoned && (classified.kind === 'soft' || classified.kind === 'menu-name')) {
+    return { kind: 'held', reason: 'file-poisoned' };
+  }
+  if (classified.kind === 'soft' || classified.kind === 'menu-name') {
+    return { kind: 'display', reason: classified.reason };
+  }
+  return classified;
 }
 
 function occurrenceKind(source, literal, decoded, nlsMessages, allowlist) {
@@ -305,10 +489,41 @@ function decodeLiteral(source, literal) {
   return decodeJsString(source.slice(literal.start, literal.end));
 }
 
-function applyStringMap(source, map, options = {}) {
+function planOccurrences(source, map, options = {}) {
   const nlsMessages = options.nlsMessages || null;
-  const allowlist = options.allowlist || null;
   const literals = collectLiterals(source);
+  const items = [];
+  for (const literal of literals) {
+    const raw = source.slice(literal.start, literal.end);
+    if (raw.length > 4000) continue;
+    let decoded;
+    try {
+      decoded = decodeJsString(raw);
+    } catch {
+      continue;
+    }
+    if (!Object.prototype.hasOwnProperty.call(map, decoded)) continue;
+    items.push({
+      literal,
+      decoded,
+      classified: classifyOccurrence(literal, decoded, nlsMessages, options),
+    });
+  }
+  const poisoned = new Set();
+  if (!options.catalog) {
+    for (const item of items) {
+      if (isShortString(item.decoded) && item.classified.kind === 'token') poisoned.add(item.decoded);
+    }
+  }
+  for (const item of items) {
+    item.poisoned = poisoned.has(item.decoded);
+    item.final = finalizeClass(item.classified, item.poisoned);
+  }
+  return items;
+}
+
+function applyStringMap(source, map, options = {}) {
+  const items = planOccurrences(source, map, options);
   const edits = [];
   const skipped = [];
   const stats = {
@@ -323,18 +538,11 @@ function applyStringMap(source, map, options = {}) {
   const applied = new Set();
   const seen = new Set();
 
-  for (const literal of literals) {
-    const raw = source.slice(literal.start, literal.end);
-    if (raw.length > 4000) continue;
-    let decoded;
-    try {
-      decoded = decodeJsString(raw);
-    } catch {
-      continue;
-    }
-    if (!Object.prototype.hasOwnProperty.call(map, decoded)) continue;
+  for (const item of items) {
+    const literal = item.literal;
+    const decoded = item.decoded;
     seen.add(decoded);
-    const classified = classifyOccurrence(literal, decoded, nlsMessages, allowlist);
+    const classified = item.final;
     if (classified.kind === 'token' || classified.kind === 'held') {
       stats.skippedOccurrences++;
       skipped.push({ key: decoded, reason: classified.reason });
@@ -356,7 +564,7 @@ function applyStringMap(source, map, options = {}) {
       edits.push({
         start: literal.start,
         end: literal.end,
-        text: `{value:${encoded},original:${raw}}`,
+        text: `{value:${encoded},original:${source.slice(literal.start, literal.end)}}`,
       });
       stats.commandTitlesRewritten++;
       stats.replaced++;
@@ -397,6 +605,7 @@ module.exports = {
   propertyName,
   occurrenceKind,
   classifyOccurrence,
+  planOccurrences,
   decodeLiteral,
   applyStringMap,
   isObjectKey,

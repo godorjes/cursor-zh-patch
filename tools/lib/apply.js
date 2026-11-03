@@ -199,7 +199,11 @@ function patchApp(options) {
       nextText.set(rel, source.text);
       continue;
     }
-    const result = applyStringMap(source.text, map, { nlsMessages, allowlist });
+    const result = applyStringMap(source.text, map, {
+      nlsMessages,
+      allowlist,
+      catalog: rel === nlsRel,
+    });
     nextText.set(rel, result.code);
     perFile.set(rel, result);
     replacedLiterals += result.stats.replaced;
@@ -243,6 +247,13 @@ function patchApp(options) {
   }
 
   const files = Object.assign({}, (manifest && manifest.files) || {});
+  const bodies = new Map();
+  for (const rel of changed) {
+    bodies.set(rel, Buffer.from(nextText.get(rel), 'utf8'));
+  }
+  // Backup originals and write the manifest, including the hash of the bytes
+  // about to be installed, before touching the install tree. A kill between
+  // those writes then cannot leave patched bytes as the only copy.
   if (changed.length) ensureDir(backupDir);
   for (const rel of changed) {
     if (!files[rel]) {
@@ -251,12 +262,7 @@ function patchApp(options) {
       fs.writeFileSync(dest, sources.get(rel).buf);
       files[rel] = { sha256: hashBuf(sources.get(rel).buf) };
     }
-  }
-
-  for (const rel of changed) {
-    const body = Buffer.from(nextText.get(rel), 'utf8');
-    fs.writeFileSync(sources.get(rel).abs, body);
-    files[rel].patchedSha256 = hashBuf(body);
+    files[rel].patchedSha256 = hashBuf(bodies.get(rel));
   }
 
   if (changed.length || manifest) {
@@ -267,6 +273,10 @@ function patchApp(options) {
       createdAt: (manifest && manifest.createdAt) || new Date().toISOString(),
       files,
     }, null, 2));
+  }
+
+  for (const rel of changed) {
+    fs.writeFileSync(sources.get(rel).abs, bodies.get(rel));
   }
 
   const unmatched = [];

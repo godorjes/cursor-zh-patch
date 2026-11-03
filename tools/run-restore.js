@@ -27,8 +27,8 @@ function main() {
     restoreApp({ appRoot: args.app, backupDir: args.backup });
     console.log('已从备份还原。');
   } catch (error) {
-    console.error(error.stack || error.message);
-    process.exit(1);
+    console.error(error.message || String(error));
+    process.exit(error.code || 1);
   }
 }
 

@@ -11,8 +11,8 @@ const { sha256Hex } = require('../tools/lib/checksum');
 function writeApp(root, options) {
   const version = options.version || '3.27.22';
   const commit = options.commit || 'a'.repeat(40);
-  const desktop = options.desktop || 'const label = "Settings";\nconst extra = "Only Glass";\n';
-  const glass = options.glass || 'const glass = "New Agent";\n';
+  const desktop = options.desktop || 'const row = {label:"Settings", title:"Only Glass"};\n';
+  const glass = options.glass || 'const glass = {title:"New Agent"};\n';
   const nls = options.nls || '["Settings"]\n';
   fs.mkdirSync(path.join(root, 'out/vs/workbench'), { recursive: true });
   fs.mkdirSync(path.join(root, 'extensions'), { recursive: true });
@@ -73,7 +73,7 @@ test('a reused BackupDir after an upgrade does not write the old files back', ()
   const oldManifest = fs.readFileSync(path.join(backup, 'manifest.json'));
   const oldDesktopBackup = fs.readFileSync(path.join(backup, 'out/vs/workbench/workbench.desktop.main.js'));
 
-  const upgradedDesktop = 'const label = "Settings";\nconst build = "3.28";\n';
+  const upgradedDesktop = 'const row = {label:"Settings"};\nconst build = "3.28";\n';
   fs.writeFileSync(path.join(app, 'out/vs/workbench/workbench.desktop.main.js'), upgradedDesktop);
   fs.writeFileSync(path.join(app, 'out/vs/workbench/workbench.glass.main.js'), 'const glass = "New Agent";\n');
   fs.writeFileSync(path.join(app, 'out/nls.messages.json'), '["Settings"]\n');
@@ -148,4 +148,21 @@ test('missing or unreadable version exits as code 3', () => {
     assert.equal(error.code, 3);
   }
   assert.equal(fs.existsSync(backup), false);
+});
+
+test('restore exits 3 on a BOM product.json and prints the message only', () => {
+  const { app, backup, mapPath, allowPath } = materialize('zh-bom-');
+  patchApp({ appRoot: app, backupDir: backup, mapPath, allowlistPath: allowPath });
+  const productPath = path.join(app, 'product.json');
+  const original = fs.readFileSync(productPath);
+  fs.writeFileSync(productPath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), original]));
+  const result = require('child_process').spawnSync(process.execPath, [
+    path.join(__dirname, '../tools/run-restore.js'),
+    '--app', app,
+    '--backup', backup,
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 3);
+  assert.match(result.stderr, /无法读取版本：product.json 无法解析。/);
+  assert.equal(/\n\s+at /.test(result.stderr), false);
+  assert.equal(fs.readFileSync(productPath).equals(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), original])), true);
 });
