@@ -23,5 +23,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run tests/smoke.ps1
-        shell: pwsh
-        run: pwsh -NoProfile -File ./tests/smoke.ps1
+        # 默认的 `pwsh -Command` 会把脚本里的 exit 2 收成 1。
+        # -File 保留 0 / 1 / 2，和本机 `pwsh -File tests/smoke.ps1` 一致。
+        shell: pwsh -NoProfile -File "{0}"
+        run: |
+          & ./tests/smoke.ps1
+          exit $LASTEXITCODE
