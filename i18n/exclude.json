@@ -1,0 +1,26 @@
+{
+  "exact": [
+    "Agent",
+    "Ask",
+    "Plan",
+    "Manual",
+    "Debug",
+    "Composer",
+    "Bugbot",
+    "Tab",
+    "MCP",
+    "Max Mode",
+    "Auto",
+    "Cursor",
+    "Cloud Agent",
+    "Background Agent",
+    "Beta",
+    "Git",
+    "@Web",
+    "@Docs",
+    "@Codebase",
+    "@Terminals",
+    "@Chats",
+    "@Git"
+  ]
+}

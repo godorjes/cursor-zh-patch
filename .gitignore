@@ -1,0 +1,6 @@
+backups/
+i18n/pending.json
+i18n/extracted.json
+i18n/dual-use.json
+node_modules/
+*.vsix
