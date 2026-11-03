@@ -34,9 +34,14 @@ if ($layout) {
     exit 1
 }
 
+$product = Read-CursorProduct $InstallPath
+if ($null -eq $product) {
+    Write-Out '无法读取版本：product.json 缺少 version 字段或无法解析。'
+    exit 3
+}
+
 if (-not $BackupDir) {
-    $versionForBackup = Get-ProductVersion $InstallPath
-    $BackupDir = Join-Path $PSScriptRoot (Join-Path 'backups' $versionForBackup)
+    $BackupDir = Join-Path $PSScriptRoot (Join-Path 'backups' ([string]$product.version))
 }
 
 $manifest = Join-Path $BackupDir 'manifest.json'

@@ -106,9 +106,18 @@ function placeholders(text) {
 }
 
 function sameList(a, b) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  const left = [...a].sort();
+  const right = [...b].sort();
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) return false;
   return true;
+}
+
+function isShortString(text) {
+  if (typeof text !== 'string') return false;
+  if (/\{(\d+)\}|\$\{[^}]+\}|%[sdif]/.test(text)) return false;
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.length <= 2;
 }
 
 /**
@@ -139,4 +148,5 @@ module.exports = {
   placeholders,
   translationProblem,
   isFunctionalShape,
+  isShortString,
 };

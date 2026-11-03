@@ -1,7 +1,7 @@
 'use strict';
 
 const jsTokens = require('../vendor/js-tokens');
-const { decodeJsString, encodeJsString, isFunctionalShape } = require('./strings');
+const { decodeJsString, encodeJsString, isFunctionalShape, isShortString } = require('./strings');
 
 const TOKEN_PROPS = new Set([
   'id',
@@ -17,9 +17,13 @@ const TOKEN_PROPS = new Set([
   'when',
   'keybinding',
   'scope',
+  'type',
+  'name',
+  'kind',
+  'value',
 ]);
 
-const TOKEN_CALLEES = new Set([
+const CALL_CALLEES = new Set([
   'getData',
   'setData',
   'getItem',
@@ -27,7 +31,17 @@ const TOKEN_CALLEES = new Set([
   'removeItem',
   'getAttribute',
   'setAttribute',
+  'includes',
+  'indexOf',
+  'startsWith',
+  'endsWith',
+  'get',
+  'has',
+  'set',
+  'delete',
 ]);
+
+const COMPARE_OPS = new Set(['==', '===', '!=', '!==']);
 
 function isSignificant(token) {
   return (
@@ -44,13 +58,9 @@ function brief(token) {
   return { type: token.type, value };
 }
 
-/**
- * Collect closed ', ", and no-substitution template literals.
- * Template literals that contain ${} are not collected (they are not
- * whole-string replacements).
- */
 function collectLiterals(source) {
   const literals = [];
+  const tokens = [];
   const recent = [];
   let offset = 0;
   let pending = null;
@@ -59,6 +69,8 @@ function collectLiterals(source) {
     const start = offset;
     offset += token.value.length;
     const significant = isSignificant(token);
+    const record = { type: token.type, value: token.value, start, end: offset, significant };
+    tokens.push(record);
 
     if (pending && significant) {
       pending.next = brief(token);
@@ -75,14 +87,16 @@ function collectLiterals(source) {
         start,
         end: offset,
         quote: token.value[0],
-        prev: recent.slice(-6),
+        prev: recent.slice(-12),
         next: null,
+        tokenIndex: tokens.length - 1,
+        tokens,
       };
     }
 
     if (significant) {
       recent.push(brief(token));
-      if (recent.length > 8) recent.shift();
+      if (recent.length > 16) recent.shift();
     }
   }
 
@@ -113,28 +127,57 @@ function propertyName(literal) {
 
 function isObjectKey(literal) {
   if (!literal.next || literal.next.value !== ':') return false;
-  const prev = literal.prev;
-  const last = prev && prev[prev.length - 1];
+  const last = literal.prev && literal.prev[literal.prev.length - 1];
   if (last && last.value === '?') return false;
   return true;
 }
 
 function isComparison(literal) {
-  const last = literal.prev && literal.prev[literal.prev.length - 1];
-  return !!last && (last.value === '===' || last.value === '!==' || last.value === '==' || last.value === '!=');
+  const prev = literal.prev && literal.prev[literal.prev.length - 1];
+  const next = literal.next;
+  if (prev && (COMPARE_OPS.has(prev.value) || (prev.type === 'IdentifierName' && prev.value === 'case'))) {
+    return true;
+  }
+  if (next && COMPARE_OPS.has(next.value)) return true;
+  return false;
 }
 
-function isCaseLabel(literal) {
-  const last = literal.prev && literal.prev[literal.prev.length - 1];
-  return !!last && last.type === 'IdentifierName' && last.value === 'case';
+function isMemberAssignment(literal) {
+  const prev = literal.prev || [];
+  if (!prev.length || prev[prev.length - 1].value !== '=') return false;
+  const left = prev[prev.length - 2];
+  const dot = prev[prev.length - 3];
+  if (left && left.value === ']') return true;
+  if (left && left.type === 'IdentifierName' && dot && (dot.value === '.' || dot.value === '?.')) return true;
+  return false;
 }
 
-function isTokenCallee(literal) {
-  const prev = literal.prev;
-  if (!prev || prev.length < 2) return false;
-  const paren = prev[prev.length - 1];
-  const callee = prev[prev.length - 2];
-  return !!paren && paren.value === '(' && !!callee && TOKEN_CALLEES.has(callee.value);
+function isSubscript(literal) {
+  const prev = literal.prev && literal.prev[literal.prev.length - 1];
+  return !!(prev && prev.value === '[' && literal.next && literal.next.value === ']');
+}
+
+function isInOperator(literal) {
+  const prev = literal.prev && literal.prev[literal.prev.length - 1];
+  const next = literal.next;
+  if (prev && prev.type === 'IdentifierName' && prev.value === 'in') return true;
+  if (next && next.type === 'IdentifierName' && next.value === 'in') return true;
+  return false;
+}
+
+function calleeName(literal) {
+  const prev = literal.prev || [];
+  if (!prev.length || prev[prev.length - 1].value !== '(') return null;
+  const name = prev[prev.length - 2];
+  if (!name || name.type !== 'IdentifierName') return null;
+  return name.value;
+}
+
+function isBlockedCall(literal) {
+  const name = calleeName(literal);
+  if (!name) return false;
+  if (CALL_CALLEES.has(name)) return true;
+  return /^publicLog/i.test(name);
 }
 
 function isNlsOriginal(literal, decoded, nlsMessages) {
@@ -153,44 +196,128 @@ function isNlsOriginal(literal, decoded, nlsMessages) {
   return nlsMessages[index] === decoded;
 }
 
-function isCommandTitle(source, literal) {
+function enclosingObject(literal) {
+  const tokens = literal.tokens;
+  if (!tokens || literal.tokenIndex == null) return null;
+  let depth = 0;
+  let open = -1;
+  for (let i = literal.tokenIndex; i >= 0; i--) {
+    const token = tokens[i];
+    if (!token.significant) continue;
+    if (token.value === '}') depth++;
+    else if (token.value === '{') {
+      if (depth === 0) {
+        open = i;
+        break;
+      }
+      depth--;
+    }
+  }
+  if (open < 0) return null;
+  depth = 0;
+  for (let i = open; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (!token.significant) continue;
+    if (token.value === '{') depth++;
+    else if (token.value === '}') {
+      depth--;
+      if (depth === 0) return { start: open, end: i, tokens };
+    }
+  }
+  return null;
+}
+
+function isCommandTitle(literal) {
   if (propertyName(literal) !== 'title') return false;
-  const ahead = source.slice(literal.end, literal.end + 320);
-  const behind = source.slice(Math.max(0, literal.start - 140), literal.start);
-  if (ahead.includes('f1:')) return true;
-  if (behind.includes('id:') && ahead.includes('category:')) return true;
+  const span = enclosingObject(literal);
+  if (!span) return false;
+  let depth = 0;
+  for (let i = span.start; i <= span.end; i++) {
+    const token = span.tokens[i];
+    if (!token.significant) continue;
+    if (token.value === '{') {
+      depth++;
+      continue;
+    }
+    if (token.value === '}') {
+      depth--;
+      continue;
+    }
+    if (depth !== 1) continue;
+    if (token.type === 'IdentifierName' && (token.value === 'f1' || token.value === 'category')) {
+      for (let j = i + 1; j <= span.end; j++) {
+        if (!span.tokens[j].significant) continue;
+        if (span.tokens[j].value === ':') return true;
+        break;
+      }
+    }
+  }
   return false;
 }
 
-function occurrenceKind(source, literal, decoded, nlsMessages) {
-  if (isFunctionalShape(decoded)) return 'token';
-  if (isObjectKey(literal)) return 'token';
-  if (isComparison(literal)) return 'token';
-  if (isCaseLabel(literal)) return 'token';
-  if (isTokenCallee(literal)) return 'token';
-  const prop = propertyName(literal);
-  if (prop && TOKEN_PROPS.has(prop)) return 'token';
-  if (prop === 'original') return 'original';
-  if (isNlsOriginal(literal, decoded, nlsMessages)) return 'nls-original';
-  if (isCommandTitle(source, literal)) return 'command-title';
-  return 'display';
+function isIdLikeProperty(literal) {
+  const name = propertyName(literal);
+  if (!name) return false;
+  if (TOKEN_PROPS.has(name)) return true;
+  return name.startsWith('data-');
+}
+
+function contextAllowed(decoded, kind, allowlist) {
+  if (!isShortString(decoded)) return true;
+  const contexts = allowlist && allowlist[decoded];
+  return Array.isArray(contexts) && contexts.includes(kind);
+}
+
+function classifyOccurrence(literal, decoded, nlsMessages, allowlist) {
+  if (isFunctionalShape(decoded)) return { kind: 'token', reason: 'functional-shape' };
+  if (isObjectKey(literal)) return { kind: 'token', reason: 'object-key' };
+  if (isComparison(literal)) return { kind: 'token', reason: 'comparison' };
+  if (isMemberAssignment(literal)) return { kind: 'token', reason: 'member-assignment' };
+  if (isSubscript(literal)) return { kind: 'token', reason: 'subscript' };
+  if (isInOperator(literal)) return { kind: 'token', reason: 'in-operator' };
+  if (isBlockedCall(literal)) return { kind: 'token', reason: 'call' };
+  if (isIdLikeProperty(literal)) return { kind: 'token', reason: 'id-like-property' };
+  if (propertyName(literal) === 'original') {
+    if (!contextAllowed(decoded, 'nls-original', allowlist)) return { kind: 'held', reason: 'short-not-allowlisted' };
+    return { kind: 'original', reason: 'original-field' };
+  }
+  if (isNlsOriginal(literal, decoded, nlsMessages)) {
+    if (!contextAllowed(decoded, 'nls-original', allowlist)) return { kind: 'held', reason: 'short-not-allowlisted' };
+    return { kind: 'nls-original', reason: 'nls-original' };
+  }
+  if (isCommandTitle(literal)) {
+    if (!contextAllowed(decoded, 'command-title', allowlist)) return { kind: 'held', reason: 'short-not-allowlisted' };
+    return { kind: 'command-title', reason: 'command-title' };
+  }
+  if (!contextAllowed(decoded, 'display', allowlist)) return { kind: 'held', reason: 'short-not-allowlisted' };
+  return { kind: 'display', reason: 'display' };
+}
+
+function occurrenceKind(source, literal, decoded, nlsMessages, allowlist) {
+  return classifyOccurrence(literal, decoded, nlsMessages, allowlist).kind;
 }
 
 function decodeLiteral(source, literal) {
   return decodeJsString(source.slice(literal.start, literal.end));
 }
 
-/**
- * Replace whole string literals whose decoded text is a map key.
- * Keys that also appear as functional tokens are not replaced anywhere.
- * localize/localize2 English arguments (nls-original) and explicit
- * `original:` fields are left in English so the command palette can
- * still match the English alias.
- */
 function applyStringMap(source, map, options = {}) {
   const nlsMessages = options.nlsMessages || null;
+  const allowlist = options.allowlist || null;
   const literals = collectLiterals(source);
-  const byValue = new Map();
+  const edits = [];
+  const skipped = [];
+  const stats = {
+    replaced: 0,
+    commandTitlesRewritten: 0,
+    nlsOriginalKept: 0,
+    originalFieldKept: 0,
+    skippedOccurrences: 0,
+    keysApplied: [],
+    keysSeen: [],
+  };
+  const applied = new Set();
+  const seen = new Set();
 
   for (const literal of literals) {
     const raw = source.slice(literal.start, literal.end);
@@ -202,73 +329,44 @@ function applyStringMap(source, map, options = {}) {
       continue;
     }
     if (!Object.prototype.hasOwnProperty.call(map, decoded)) continue;
-    let list = byValue.get(decoded);
-    if (!list) {
-      list = [];
-      byValue.set(decoded, list);
-    }
-    list.push({ literal, decoded });
-  }
-
-  const skipped = [];
-  const activeValues = new Set();
-  for (const [value, occ] of byValue) {
-    const tokenHit = occ.some((item) => occurrenceKind(source, item.literal, item.decoded, nlsMessages) === 'token');
-    if (tokenHit) {
-      skipped.push({ key: value, reason: 'used as a functional token' });
+    seen.add(decoded);
+    const classified = classifyOccurrence(literal, decoded, nlsMessages, allowlist);
+    if (classified.kind === 'token' || classified.kind === 'held') {
+      stats.skippedOccurrences++;
+      skipped.push({ key: decoded, reason: classified.reason });
       continue;
     }
-    activeValues.add(value);
-  }
-
-  const edits = [];
-  const stats = {
-    replaced: 0,
-    commandTitlesRewritten: 0,
-    nlsOriginalKept: 0,
-    originalFieldKept: 0,
-    keysApplied: [],
-  };
-  const applied = new Set();
-
-  for (const [value, occ] of byValue) {
-    if (!activeValues.has(value)) continue;
-    const translated = map[value];
-    for (const item of occ) {
-      const kind = occurrenceKind(source, item.literal, item.decoded, nlsMessages);
-      if (kind === 'nls-original') {
-        stats.nlsOriginalKept++;
-        applied.add(value);
-        continue;
-      }
-      if (kind === 'original') {
-        stats.originalFieldKept++;
-        applied.add(value);
-        continue;
-      }
-      const literal = item.literal;
-      if (kind === 'command-title') {
-        const originalRaw = source.slice(literal.start, literal.end);
-        const encoded = encodeJsString(translated, '"');
-        edits.push({
-          start: literal.start,
-          end: literal.end,
-          text: `{value:${encoded},original:${originalRaw}}`,
-        });
-        stats.commandTitlesRewritten++;
-        stats.replaced++;
-        applied.add(value);
-        continue;
-      }
-      const quote = literal.quote === "'" || literal.quote === '"' || literal.quote === '`' ? literal.quote : '"';
+    if (classified.kind === 'nls-original') {
+      stats.nlsOriginalKept++;
+      applied.add(decoded);
+      continue;
+    }
+    if (classified.kind === 'original') {
+      stats.originalFieldKept++;
+      applied.add(decoded);
+      continue;
+    }
+    const translated = map[decoded];
+    if (classified.kind === 'command-title') {
+      const encoded = encodeJsString(translated, '"');
       edits.push({
         start: literal.start,
         end: literal.end,
-        text: encodeJsString(translated, quote),
+        text: `{value:${encoded},original:${raw}}`,
       });
+      stats.commandTitlesRewritten++;
       stats.replaced++;
-      applied.add(value);
+      applied.add(decoded);
+      continue;
     }
+    const quote = literal.quote === "'" || literal.quote === '"' || literal.quote === '`' ? literal.quote : '"';
+    edits.push({
+      start: literal.start,
+      end: literal.end,
+      text: encodeJsString(translated, quote),
+    });
+    stats.replaced++;
+    applied.add(decoded);
   }
 
   edits.sort((a, b) => a.start - b.start);
@@ -286,6 +384,7 @@ function applyStringMap(source, map, options = {}) {
   }
   parts.push(source.slice(cursor));
   stats.keysApplied = [...applied];
+  stats.keysSeen = [...seen];
   return { code: parts.join(''), skipped, stats };
 }
 
@@ -293,8 +392,10 @@ module.exports = {
   collectLiterals,
   propertyName,
   occurrenceKind,
+  classifyOccurrence,
   decodeLiteral,
   applyStringMap,
   isObjectKey,
   isComparison,
+  isCommandTitle,
 };

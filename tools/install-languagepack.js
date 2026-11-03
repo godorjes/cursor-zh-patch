@@ -36,14 +36,17 @@ async function main() {
   const args = parseArgs(process.argv);
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config.json'), 'utf8'));
   const pack = config.languagePack;
-  if (!args['extensions-dir'] || !args['user-data']) {
-    console.error('usage: node tools/install-languagepack.js --extensions-dir <dir> --user-data <dir> [--vsix <file>]');
+  if (!args['extensions-dir'] || !args['user-data'] || !args.cursor) {
+    console.error('usage: node tools/install-languagepack.js --cursor <Cursor.exe> --extensions-dir <dir> --user-data <dir> [--vsix <file>]');
     process.exit(1);
+  }
+  if (!fs.existsSync(args.cursor)) {
+    throw new Error(`找不到 Cursor.exe：${args.cursor}`);
   }
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-zh-lp-'));
   try {
-    const zipPath = path.join(tmp, 'pack.zip');
+    const zipPath = path.join(tmp, 'pack.vsix');
     let bytes = args.vsix ? fs.readFileSync(args.vsix) : await download(pack.vsixUrl);
     if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) bytes = zlib.gunzipSync(bytes);
     fs.writeFileSync(zipPath, bytes);
@@ -64,11 +67,16 @@ async function main() {
     const updated = upsertLanguagePack(existing, target, manifest);
     fs.mkdirSync(args['user-data'], { recursive: true });
     fs.writeFileSync(packsPath, updated.text);
+    const installed = spawnSync(args.cursor, ['--install-extension', zipPath, '--force'], { encoding: 'utf8' });
+    if (installed.status !== 0) {
+      throw new Error(installed.stderr || installed.stdout || 'Cursor.exe --install-extension failed');
+    }
     console.log(JSON.stringify({
       installed: target,
       version: manifest.version,
       hash: updated.pack.hash,
       languagepacks: packsPath,
+      cursor: args.cursor,
     }));
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

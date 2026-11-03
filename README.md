@@ -26,18 +26,10 @@ pwsh -NoProfile -File .\patch.ps1 -InstallPath F:\cursor\cursor -BackupDir D:\cu
 pwsh -NoProfile -File .\restore.ps1 -InstallPath F:\cursor\cursor -BackupDir D:\cursor-zh-backup
 ```
 
-也可以双击 `patch.bat` / `restore.bat`。两个 `.bat` 只是转给 PowerShell。
-
-可选开关（写用户目录，不改安装根）：
+`patch.bat` 默认会加上 `-SetLocale -InstallLanguagePack`：设置 `locale=zh-cn`，用 `Cursor.exe --install-extension` 安装语言包，并删除 `%APPDATA%\Cursor\clp`（语言包消息缓存）。删掉缓存后，下次启动会按当前的 `nls.messages.json` 重新生成。`patch.ps1` 本身不加这两个开关，方便只改安装目录。
 
 - `-SetLocale`：把 `%USERPROFILE%\.cursor\argv.json` 的 `locale` 设为 `zh-cn`，并先备份这份文件
-- `-InstallLanguagePack`：安装与 VS Code 1.128 对应的官方简体中文语言包 `MS-CEINTL.vscode-language-pack-zh-hans` 1.128.2026071013，并清掉 `%APPDATA%\Cursor\clp`，让 Cursor 下次启动按新的 `nls.messages.json` 重新生成语言缓存
-
-完整汉化（VS Code 核心界面 + Cursor 自己的界面）：
-
-```powershell
-pwsh -NoProfile -File .\patch.ps1 -InstallPath F:\cursor\cursor -BackupDir D:\cursor-zh-backup -SetLocale -InstallLanguagePack
-```
+- `-InstallLanguagePack`：下载已核对存在的官方包 `MS-CEINTL.vscode-language-pack-zh-hans` **1.128.2026071013**（`engines.vscode` 为 `^1.128.0`，2026-07-10 发布），交给 `Cursor.exe --install-extension`。成功后删除 `%APPDATA%\Cursor\clp`
 
 ## 脚本做什么
 
@@ -49,15 +41,20 @@ pwsh -NoProfile -File .\patch.ps1 -InstallPath F:\cursor\cursor -BackupDir D:\cu
 | `i18n/exclude.json` | 必须保留英文的专名和插入 token（Agent、Ask、Plan、`@Web` 等） |
 | `tools/extract.js` | 从 workbench 脚本和 `nls.messages.json` 抽出待译字符串，支持增量 |
 | `tools/extract.ps1` | 上面这个提取器的 Windows 入口 |
+| `tools/export-contexts.js` | 导出每条映射在三个目标文件里的命中上下文，供短句允许表人工复核 |
 
-映射表里的替换是**整段字面量**：`"New Chat"` 会变成 `"新聊天"`，但不会把 `"New Chat"` 里的 `Chat` 单独换掉。单引号、双引号、以及没有 `${}` 的模板字符串都会处理，中文按所在引号转义。带插值的模板字符串不动。
+只改这三个文件：`out/vs/workbench/workbench.desktop.main.js`、`out/vs/workbench/workbench.glass.main.js`、`out/nls.messages.json`。`extensions/` 和其他脚本不动。
 
-同一条英文如果既当界面文字、又当功能 token（对象键、比较、`getData`、命令 id、设置键、`@` 提及），整条跳过，保持英文。`patch` 结束时会打印跳过数量，明细在备份目录的 `patch-report.json`。
+映射表里的替换是**整段字面量**：`"New Chat"` 会变成 `"新聊天"`，不会把 `"Apply {0} changes"` 里的 `Apply` 当成命中。键区分大小写，`"Sign in"` 和 `"Sign In"` 是两条。比较（左右都可以）、`switch case`、`对象.字段 = "..."`、下标、`in`、`includes` / `indexOf` / `startsWith` / `endsWith` / `get` / `has` / `set` / `delete`、`publicLog*`、以及 `type` / `name` / `kind` / `value` / `id` 和 `data-*` 的值，这些出现位置一律不改。
+
+一到两个词、且不含占位符的短句，只有写在 `i18n/short-allowlist.json` 里、并且上下文是界面文字、nls 原文参数或命令标题时才会替换。`On`、`Off`、`Local`、`Cloud`、`Usage`、`Enabled`、`Keep`、`Apply`、`Accept`、`General`、`Models` 目前不在允许表里，先留英文。用上面的 `export-contexts.js` 导出上下文，确认后再加进去。
+
+成功时标准输出第一行固定是 `匹配报告: 命中=N 未命中=M`，下一行是 `跳过=K`。命中 = 实际替换掉的字面量次数 + 故意留在 nls `original` 参数或 `original:` 字段里的英文次数。跳过 = 危险上下文和没进允许表的短句出现次数，不算进命中。未命中 = 映射表里在这三个文件中一次完整字面量都没出现的条目数。同一条键可以既有命中也有跳过。
 
 VS Code 核心界面靠官方语言包和 `locale=zh-cn`。Cursor 自己的字符串有两条路：
 
 - 已经进 `nls.messages.json` 的，改目录里的英文；`localize2` 调用里的英文参数留着，命令面板仍能用英文搜到（`alias` 来自 `original`）
-- 直接写在 `workbench.desktop.main.js`、`workbench.glass.main.js` 和其他 `.js` / `.json` / `.css` 里的，按映射表替换
+- 直接写在这两个 workbench 文件里的整句，按映射表替换
 
 改过的、并且出现在 `product.json` 的 `checksums` 里的文件，会重算校验和：SHA-256，标准 Base64，去掉末尾 `=`。键集合以及 `version`、`commit` 等字段不动。3.27.22 的校验和清单只有 6 个文件；`workbench.glass.main.js` 和 `nls.messages.json` 不在清单里，改它们不会触发“安装似乎已损坏”。`workbench.desktop.main.js` 在清单里，校验和已经按同一算法对过官方包。
 
@@ -69,8 +66,11 @@ VS Code 核心界面靠官方语言包和 `locale=zh-cn`。Cursor 自己的字�
 | --- | --- |
 | 0 | 成功。已经打过补丁再跑一次也是 0，安装树字节与第一次相同 |
 | 2 | `-InstallPath` 不存在。不改安装目录，不写备份 |
+| 3 | `product.json` 缺少 `version` 或无法解析。不改安装目录，不写备份 |
 | 4 | Cursor 正在运行。不改安装目录，不写备份 |
-| 1 | 其他失败，例如只有 `app.asar`、备份目录在安装根里面、语法检查失败 |
+| 1 | 其他失败，例如只有 `app.asar`、备份目录在安装根里面、语法检查失败、备份版本或哈希对不上 |
+
+备份清单记下 `version` 和 `commit`。同一 `-BackupDir` 遇到另一个版本时，新备份写到 `by-build/<版本>__<commit>/`，不会把旧文件盖回新安装。还原时版本或 commit 不一致就拒绝。再次打补丁会给还没备份过的文件补一份原始字节。用备份之前，当前文件的哈希必须等于记录的原始哈希或上次打完补丁的哈希，否则拒绝。
 
 版本不是 3.27.22 时打印警告（含实际版本和 3.27.22），继续打补丁，并打印匹配 / 未匹配条数，退出码 0。
 

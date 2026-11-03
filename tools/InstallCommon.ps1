@@ -104,10 +104,29 @@ function Find-CursorInstall {
     return $null
 }
 
-function Get-ProductVersion([string]$InstallPath) {
+function Read-CursorProduct([string]$InstallPath) {
     $productPath = Join-Path $InstallPath 'resources/app/product.json'
-    $raw = [System.IO.File]::ReadAllText($productPath)
-    $product = $raw | ConvertFrom-Json
+    if (-not (Test-Path -LiteralPath $productPath)) {
+        return $null
+    }
+    try {
+        $raw = [System.IO.File]::ReadAllText($productPath)
+        $product = $raw | ConvertFrom-Json
+    } catch {
+        return $null
+    }
+    $version = [string]$product.version
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        return $null
+    }
+    return $product
+}
+
+function Get-ProductVersion([string]$InstallPath) {
+    $product = Read-CursorProduct $InstallPath
+    if ($null -eq $product) {
+        return $null
+    }
     return [string]$product.version
 }
 

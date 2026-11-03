@@ -97,7 +97,7 @@ function scanJs(source, nlsMessages) {
       const kind = occurrenceKind(source, literal, decoded, nlsMessages);
       if (kind === 'token') token = true;
       const prop = propertyName(literal);
-      if (kind === 'display' || kind === 'command-title' || kind === 'nls-original' || (prop && UI_PROPS.has(prop))) {
+      if (kind === 'display' || kind === 'held' || kind === 'command-title' || kind === 'nls-original' || (prop && UI_PROPS.has(prop))) {
         ui = true;
       }
       if (!prop && (kind === 'display' || kind === 'nls-original') && looksLikeProse(decoded)) ui = true;

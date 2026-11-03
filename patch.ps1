@@ -42,9 +42,15 @@ if ($layout) {
     exit 1
 }
 
+$product = Read-CursorProduct $InstallPath
+if ($null -eq $product) {
+    Write-Out '无法读取版本：product.json 缺少 version 字段或无法解析。'
+    exit 3
+}
+$version = [string]$product.version
+
 if (-not $BackupDir) {
-    $versionForBackup = Get-ProductVersion $InstallPath
-    $BackupDir = Join-Path $PSScriptRoot (Join-Path 'backups' $versionForBackup)
+    $BackupDir = Join-Path $PSScriptRoot (Join-Path 'backups' $version)
 }
 if (Test-DirectoryInside $InstallPath $BackupDir) {
     Write-Out "备份目录不能位于安装目录内: $BackupDir"
@@ -57,7 +63,6 @@ if (-not $node) {
     exit 1
 }
 
-$version = Get-ProductVersion $InstallPath
 if ($version -ne $Script:SupportedVersion) {
     Write-Out "警告: 检测到版本 $version，受支持版本为 $($Script:SupportedVersion)。将继续打补丁。"
 }
@@ -69,7 +74,8 @@ $exclude = Join-Path $PSScriptRoot 'i18n/exclude.json'
     --app $app `
     --backup $BackupDir `
     --map $map `
-    --exclude $exclude
+    --exclude $exclude `
+    --allowlist (Join-Path $PSScriptRoot 'i18n/short-allowlist.json')
 if ($LASTEXITCODE -ne 0) {
     exit $(if ($LASTEXITCODE) { $LASTEXITCODE } else { 1 })
 }
@@ -83,11 +89,16 @@ if ($SetLocale) {
 if ($InstallLanguagePack) {
     $extensions = Join-Path $env:USERPROFILE '.cursor/extensions'
     $userData = if (Test-WindowsHost) { Join-Path $env:APPDATA 'Cursor' } else { Join-Path $env:HOME '.config/Cursor' }
-    & $node (Join-Path $PSScriptRoot 'tools/install-languagepack.js') --extensions-dir $extensions --user-data $userData
+    $cursorExe = Join-Path $InstallPath 'Cursor.exe'
+    & $node (Join-Path $PSScriptRoot 'tools/install-languagepack.js') `
+        --extensions-dir $extensions `
+        --user-data $userData `
+        --cursor $cursorExe
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     $clp = Join-Path $userData 'clp'
     if (Test-Path -LiteralPath $clp) {
         Remove-Item -LiteralPath $clp -Recurse -Force
+        Write-Out "已删除语言缓存: $clp"
     }
 }
 

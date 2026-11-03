@@ -87,5 +87,8 @@
   "Usage": "用量",
   "More Actions": "更多操作",
   "Local": "本地",
-  "Cloud": "云端"
+  "Cloud": "云端",
+  "Apply {0} changes": "应用 {0} 个更改",
+  "Found %s results": "找到 %s 个结果",
+  "Open ${name}": "打开 ${name}"
 }

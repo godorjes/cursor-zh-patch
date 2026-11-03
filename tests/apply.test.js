@@ -49,6 +49,7 @@ function writeFixture(root) {
   const product = {
     nameShort: 'Cursor',
     version: '3.27.22',
+    commit: 'abcabcabcabcabcabcabcabcabcabcabcabcabca',
     vscodeVersion: '1.128.0',
     checksums: {
       'vs/workbench/workbench.desktop.main.js': vscodeChecksumFile(desktopPath),
@@ -88,6 +89,12 @@ test('patch is idempotent, syntax-clean, and restores the clean backup', () => {
   const app = path.join(root, 'app');
   const backup = path.join(root, 'backup');
   const mapPath = path.join(root, 'zh-CN.json');
+  const allowPath = path.join(root, 'allow.json');
+  fs.writeFileSync(allowPath, JSON.stringify({
+    Save: ['display', 'nls-original', 'command-title'],
+    'Accept All': ['display', 'nls-original', 'command-title'],
+    '&&File': ['display', 'nls-original', 'command-title'],
+  }));
   fs.writeFileSync(mapPath, JSON.stringify({
     'Open Cursor Settings': '打开 Cursor 设置',
     'Register Close Tooltip': '注册关闭提示',
@@ -103,7 +110,7 @@ test('patch is idempotent, syntax-clean, and restores the clean backup', () => {
   const desktopPath = path.join(app, 'out/vs/workbench/workbench.desktop.main.js');
   const originalDesktop = fs.readFileSync(desktopPath);
 
-  const first = patchApp({ appRoot: app, backupDir: backup, mapPath });
+  const first = patchApp({ appRoot: app, backupDir: backup, mapPath, allowlistPath: allowPath });
   const patchedDesktop = fs.readFileSync(desktopPath);
   const backupDesktopHash = sha256Hex(fs.readFileSync(path.join(backup, 'out/vs/workbench/workbench.desktop.main.js')));
   assert.equal(backupDesktopHash, sha256Hex(originalDesktop));
@@ -134,7 +141,7 @@ test('patch is idempotent, syntax-clean, and restores the clean backup', () => {
   require('child_process').execFileSync(process.execPath, ['--check', desktopPath], { stdio: 'pipe' });
   require('child_process').execFileSync(process.execPath, ['--check', path.join(app, 'out/vs/workbench/workbench.glass.main.js')], { stdio: 'pipe' });
 
-  const second = patchApp({ appRoot: app, backupDir: backup, mapPath });
+  const second = patchApp({ appRoot: app, backupDir: backup, mapPath, allowlistPath: allowPath });
   assert.equal(second.backupPreserved, true);
   assert.equal(
     sha256Hex(fs.readFileSync(path.join(backup, 'out/vs/workbench/workbench.desktop.main.js'))),

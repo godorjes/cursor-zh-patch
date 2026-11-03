@@ -17,8 +17,11 @@ test('decode and encode round-trip quotes, templates, and escapes', () => {
   }
 });
 
+const SHORT = { Save: ['display', 'nls-original', 'command-title'] };
+
 test('placeholder and glossary guards', () => {
   assert.deepEqual(placeholders('已导出 {0} 个，共 {1}'), ['{0}', '{1}']);
+  assert.equal(translationProblem('Use {1} then {0}', '先 {0} 后 {1}'), null);
   assert.equal(translationProblem('Open {0}', '打开'), 'placeholder mismatch');
   assert.equal(translationProblem('Agent', '智能体'), 'contains 智能体');
   assert.equal(translationProblem('Agent panel', '代理面板'), 'Agent translated as 代理');
@@ -29,14 +32,14 @@ test('placeholder and glossary guards', () => {
 
 test('replacement is whole-literal only and keeps quote style', () => {
   const source = 'const a = "Save"; const b = "Accept All"; const c = \'Save\'; const d = `Save`;';
-  const result = applyStringMap(source, { Save: '保存' });
+  const result = applyStringMap(source, { Save: '保存' }, { allowlist: SHORT });
   assert.equal(result.code, 'const a = "保存"; const b = "Accept All"; const c = \'保存\'; const d = `保存`;');
   assert.equal(result.stats.replaced, 3);
 });
 
 test('template with interpolation is not rewritten', () => {
   const source = 'const a = `Save ${name}`; const b = `Save`;';
-  const result = applyStringMap(source, { Save: '保存', 'Save ${name}': '保存 ${name}' });
+  const result = applyStringMap(source, { Save: '保存', 'Save ${name}': '保存 ${name}' }, { allowlist: SHORT });
   assert.equal(result.code.includes('`Save ${name}`'), true);
   assert.equal(result.code.includes('`保存`'), true);
 });
@@ -54,13 +57,13 @@ test('object keys, comparisons, and getData tokens block the whole key', () => {
     Agent: '代理人',
     Mode: '模式',
     Save: '保存',
-  });
+  }, { allowlist: SHORT });
   assert.equal(result.code.includes('"终端"'), false);
+  assert.equal(result.code.includes('const ok = "保存"'), true);
   assert.equal(result.code.includes('"Agent"'), true);
   assert.equal(result.code.includes('"Mode"'), true);
-  assert.equal(result.code.includes('"保存"'), true);
   assert.deepEqual(
-    result.skipped.map((item) => item.key).sort(),
+    [...new Set(result.skipped.map((item) => item.key))].sort(),
     ['Agent', 'Mode', 'Terminals']
   );
 });
@@ -84,21 +87,21 @@ test('plain command titles keep an English original alias', () => {
 
 test('explicit original fields are not translated', () => {
   const source = 'const title = {value:"Save",original:"Save"};';
-  const result = applyStringMap(source, { Save: '保存' });
-  assert.match(result.code, /value:"保存"/);
-  assert.match(result.code, /original:"Save"/);
+  const result = applyStringMap(source, { Save: '保存' }, { allowlist: SHORT });
+  assert.equal(result.code, source);
   assert.equal(result.stats.originalFieldKept, 1);
+  assert.equal(result.stats.skippedOccurrences >= 1, true);
 });
 
 test('regex literals are not treated as strings', () => {
   const source = 'const re = /"Save"/g; const label = "Save";';
-  const result = applyStringMap(source, { Save: '保存' });
+  const result = applyStringMap(source, { Save: '保存' }, { allowlist: SHORT });
   assert.equal(result.code, 'const re = /"Save"/g; const label = "保存";');
 });
 
 test('chinese replacement is escaped for the host quote', () => {
   const source = 'const a = "Say \\"hi\\"";';
-  const result = applyStringMap(source, { 'Say "hi"': '说"嗨"' });
+  const result = applyStringMap(source, { 'Say "hi"': '说"嗨"' }, { allowlist: { 'Say "hi"': ['display'] } });
   assert.equal(result.code, 'const a = "说\\"嗨\\"";');
   assert.equal(require('../tools/lib/strings').decodeJsString('"说\\"嗨\\""'), '说"嗨"');
 });
