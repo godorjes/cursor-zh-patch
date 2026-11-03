@@ -40,8 +40,26 @@ $Script:Contract = @{
     AsarRelative           = 'resources/app.asar'
     # 开发产出的映射表。冒烟不核译文措辞，只核占位符、命中条数和还原。
     MapRelative            = 'i18n/zh-CN.json'
-    # 成功打补丁时，输出里要有这一行。命中=安装树里至少出现一次的映射条目数；未命中=一次都没出现的条目数。
-    ReportPattern          = '匹配报告:\s*命中=(\d+)\s+未命中=(\d+)'
+    # 两行报告。命中、跳过按出现次数；未命中按词条。命中 + 未命中不必等于词表条数。
+    PatchableRelative      = @(
+        'resources/app/out/vs/workbench/workbench.desktop.main.js'
+        'resources/app/out/vs/workbench/workbench.glass.main.js'
+        'resources/app/out/nls.messages.json'
+        'resources/app/product.json'
+    )
+    DangerousSnippets      = @(
+        'x === "Settings"'
+        '"Chat" === x'
+        '"Chat" === flag'
+        'Status.Chat = "Keep"'
+        'obj["Apply"]'
+        'list.includes("New Chat")'
+        'map.get("Cursor Settings")'
+        'publicLog("Sign in")'
+        'Status["Log Out"] = "Log Out"'
+        'localize(0, "Cursor Settings")'
+        'original: "New Agent"'
+    )
     ForbiddenInstallPaths  = @('F:\cursor\cursor', 'F:/cursor/cursor')
     InvokeTimeoutSeconds   = 120
     ProductNameShort       = 'Cursor'
@@ -52,7 +70,7 @@ $Script:Contract = @{
     Quality                = 'stable'
     # 40 字符的夹具提交号，打补丁后必须保持不变。
     ProductCommit          = 'smoke00000000000000000000000000000000000'
-    # 夹具里埋的原文。是否命中取决于 i18n/zh-CN.json 有没有这句，冒烟不写死译文。
+    # 夹具里埋的原文。是否命中取决于映射表有没有这句带引号的完整字面量。
     FixtureSources         = @(
         'Cursor Settings'
         'New Agent'
@@ -61,6 +79,12 @@ $Script:Contract = @{
         'Open ${name}'
         'New Chat'
         'Settings'
+        'Chat'
+        'Keep'
+        'Apply'
+        'Sign in'
+        'Log Out'
+        'Smoke Extra Label'
     )
     # 词表未收录时必须原样留下。Agent 按 docs/glossary.md 保留英文。
     PreservedSources       = @(
@@ -303,11 +327,37 @@ function Get-FixtureText {
     $preloadJs = "/* smoke-structure */`n`"use strict`";`nfunction preload() { return 0; }`n"
     $sandboxJs = "/* smoke-structure */`n`"use strict`";`nfunction workbench() { return 0; }`n"
     $css = "/* smoke-structure */`n.monaco-workbench { color: #cccccc; }`n"
-    $desktopJs = "/* smoke-structure */`n`"use strict`";`nconst desktopLabels = [`"New Chat`", `"Apply {0} changes`", `"Keep This English Label`"];`n"
-    $glassJs = "/* smoke-structure */`n`"use strict`";`nconst glassLabels = [`"Agent`", `"New Agent`"];`n"
+    $desktopJs = @'
+/* smoke-structure */
+"use strict";
+const desktopLabels = ["New Chat", "Apply {0} changes", "Keep This English Label"];
+function localize(id, message) { return message; }
+localize(0, "Cursor Settings");
+function protect(x, obj, list, map, Status) {
+  const left = x === "Settings";
+  const right = "Chat" === x;
+  Status.Chat = "Keep";
+  const subscript = obj["Apply"];
+  const has = list.includes("New Chat");
+  const got = map.get("Cursor Settings");
+  publicLog("Sign in");
+  Status["Log Out"] = "Log Out";
+}
+'@
+    $desktopJs = $desktopJs.Replace("`r`n", "`n") + "`n"
+    $glassJs = @'
+/* smoke-structure */
+"use strict";
+const glassLabels = ["Agent", "New Agent"];
+const glassRight = "Chat" === flag;
+const title = { label: "New Agent", original: "New Agent" };
+const extra = "Smoke Extra Label";
+'@
+    $glassJs = $glassJs.Replace("`r`n", "`n") + "`n"
     $composerJs = "/* smoke-structure */`n`"use strict`";`nconst composerLabel = `"Agent`";`n"
     $extensionHostJs = "/* smoke-structure */`n`"use strict`";`nconst command = `"Reload Window`";`n"
-    $nlsMessages = '[' + "`n" + '  "Settings",' + "`n" + '  "Cursor Settings",' + "`n" + '  "Found %s results",' + "`n" + '  "Open ${name}"' + "`n" + ']' + "`n"
+    $outsideJs = "/* smoke-structure */`n`"use strict`";`nconst outside = `"New Chat`";`n"
+    $nlsMessages = '[' + "`n" + '  "Cursor Settings",' + "`n" + '  "Found %s results",' + "`n" + '  "Open ${name}",' + "`n" + '  "Keep This English Label"' + "`n" + ']' + "`n"
     $nlsKeys = "[`n  `"quality`",`n  `"version`"`n]`n"
     $packageJson = "{`n  `"name`": `"Cursor`",`n  `"version`": `"$($Script:Contract.SupportedVersion)`",`n  `"private`": true`n}`n"
     return [ordered]@{
@@ -320,6 +370,7 @@ function Get-FixtureText {
         'resources/app/out/vs/workbench/workbench.desktop.main.css'                                               = $css
         'resources/app/out/vs/workbench/workbench.desktop.main.js'                                                = $desktopJs
         'resources/app/out/vs/workbench/workbench.glass.main.js'                                                  = $glassJs
+        'resources/app/extensions/smoke/extension.js'                                                             = $outsideJs
         'resources/app/out/vs/workbench/api/node/extensionHostProcess.js'                                         = $extensionHostJs
         'resources/app/out/vs/workbench/contrib/composer/browser/preload-webview-browser.js'                      = $composerJs
     }
@@ -370,55 +421,215 @@ function Get-PlaceholderTokens([string]$Text) {
     return @($tokens | Sort-Object)
 }
 
+function New-OrdinalDictionary {
+    return [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::Ordinal)
+}
+
+function Get-MapPath {
+    $besidePatch = Join-Path (Split-Path -Parent $PatchScript) $Script:Contract.MapRelative
+    if (Test-Path -LiteralPath $besidePatch -PathType Leaf) {
+        return [System.IO.Path]::GetFullPath($besidePatch)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $Script:RepoRoot $Script:Contract.MapRelative))
+}
+
 function Get-TranslationMap {
-    $path = Join-Path $Script:RepoRoot $Script:Contract.MapRelative
+    $path = Get-MapPath
     $info = @{
         Path     = $path
         Present  = $false
-        Entries  = @{}
+        Mutable  = $false
+        Entries  = (New-OrdinalDictionary)
     }
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         return $info
     }
     $info.Present = $true
-    $parsed = (Read-Utf8Strict $path) | ConvertFrom-Json
-    foreach ($property in @($parsed.PSObject.Properties)) {
-        $info.Entries[$property.Name] = [string]$property.Value
+    $Script:Allowlist = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
+    $allowPath = Join-Path (Split-Path -Parent $path) 'short-allowlist.json'
+    if (Test-Path -LiteralPath $allowPath -PathType Leaf) {
+        $allowParsed = (Read-Utf8Strict $allowPath) | ConvertFrom-Json -AsHashtable
+        foreach ($key in @($allowParsed.Keys)) {
+            $name = [string]$key
+            if ($name.StartsWith('_')) { continue }
+            $Script:Allowlist[$name] = @($allowParsed[$key])
+        }
+    }
+    # -AsHashtable 保留仅大小写不同的键；再抄进 Ordinal 字典，避免默认 @{} 合并它们。
+    $parsed = (Read-Utf8Strict $path) | ConvertFrom-Json -AsHashtable
+    foreach ($key in @($parsed.Keys)) {
+        $name = [string]$key
+        $value = $parsed[$key]
+        if ($name -eq '_smokeMutable' -and [string]$value -eq 'true') {
+            $info.Mutable = $true
+        }
+        if ($name.StartsWith('_')) { continue }
+        if ($value -isnot [string]) { continue }
+        $info.Entries[$name] = [string]$value
     }
     return $info
 }
 
-function Get-ExpectedMatchCounts([string]$InstallRoot, $Entries) {
-    $text = Get-InstallSourceText $InstallRoot
-    $hit = 0
-    $miss = 0
-    foreach ($source in @($Entries.Keys)) {
-        if ($text.Contains([string]$source)) {
-            $hit++
-        } else {
-            $miss++
+function Get-QuotedLiterals([string]$Text) {
+    $list = [System.Collections.Generic.List[object]]::new()
+    $index = 0
+    $length = $Text.Length
+    while ($index -lt $length) {
+        $quote = $Text[$index]
+        if ($quote -ne '"' -and $quote -ne "'" -and $quote -ne '`') {
+            $index++
+            continue
+        }
+        $cursor = $index + 1
+        $body = [System.Text.StringBuilder]::new()
+        $closed = $false
+        $interpolated = $false
+        while ($cursor -lt $length) {
+            $char = $Text[$cursor]
+            if ($char -eq '\' -and ($cursor + 1) -lt $length) {
+                [void]$body.Append($Text[$cursor + 1])
+                $cursor += 2
+                continue
+            }
+            if ($quote -eq '`' -and $char -eq '$' -and ($cursor + 1) -lt $length -and $Text[$cursor + 1] -eq '{') {
+                $interpolated = $true
+                break
+            }
+            if ($char -eq $quote) {
+                $closed = $true
+                $cursor++
+                break
+            }
+            [void]$body.Append($char)
+            $cursor++
+        }
+        if ($closed -and -not $interpolated) {
+            $list.Add([pscustomobject]@{
+                    Text  = $body.ToString()
+                    Start = $index
+                    End   = $cursor
+                }) | Out-Null
+        }
+        $index = [Math]::Max($cursor, $index + 1)
+    }
+    return $list
+}
+
+function Get-JsTokens([string]$Text) {
+    $tokens = [System.Collections.Generic.List[string]]::new()
+    if ([string]::IsNullOrEmpty($Text)) { return $tokens }
+    $pattern = '===|!==|==|!=|=>|&&|\|\||\d+|[A-Za-z_$][\w$]*|[\[\]{}().,:=]'
+    foreach ($match in [regex]::Matches($Text, $pattern)) {
+        $tokens.Add($match.Value) | Out-Null
+    }
+    return $tokens
+}
+
+function Test-IsShortLiteral([string]$Text) {
+    if ($Text -match '\{[0-9]+\}|\$\{[^}]+\}|%[sdif]') { return $false }
+    $words = @(($Text.Trim() -split '\s+') | Where-Object { $_ })
+    return ($words.Count -ge 1 -and $words.Count -le 2)
+}
+
+function Test-ContextAllowed([string]$Text, [string]$Kind) {
+    if (-not (Test-IsShortLiteral $Text)) { return $true }
+    if ($null -eq $Script:Allowlist -or -not $Script:Allowlist.ContainsKey($Text)) { return $false }
+    return @($Script:Allowlist[$Text]) -contains $Kind
+}
+
+function Get-LiteralKind([string]$Text, $Literal, $NlsMessages) {
+    $before = $Text.Substring(0, $Literal.Start)
+    $after = $Text.Substring($Literal.End)
+    $prev = @(Get-JsTokens $before)
+    $next = @(Get-JsTokens $after)
+    $last = if ($prev.Count -gt 0) { [string]$prev[$prev.Count - 1] } else { '' }
+    $ahead = if ($next.Count -gt 0) { [string]$next[0] } else { '' }
+    $callee = if ($last -eq '(' -and $prev.Count -ge 2) { [string]$prev[$prev.Count - 2] } else { '' }
+    $dangerous = $false
+    if ($last -in @('===', '!==', '==', '!=', 'case') -or $ahead -in @('===', '!==', '==', '!=')) { $dangerous = $true }
+    if ($last -eq '[' -and $ahead -eq ']') { $dangerous = $true }
+    if ($callee -in @('includes', 'get', 'has', 'indexOf', 'startsWith', 'endsWith') -or $callee -like 'publicLog*') { $dangerous = $true }
+    if ($last -eq '=' -and $prev.Count -ge 3) {
+        $beforeEq = [string]$prev[$prev.Count - 2]
+        $beforeThat = [string]$prev[$prev.Count - 3]
+        if ($beforeEq -eq ']' -or $beforeThat -eq '.') { $dangerous = $true }
+    }
+    if ($ahead -eq ':' -and $last -ne '?') { $dangerous = $true }
+    if ($dangerous) { return 'skip' }
+    $prop = if ($last -eq ':' -and $prev.Count -ge 2) { [string]$prev[$prev.Count - 2] } else { '' }
+    if ($prop -eq 'original') {
+        if (Test-ContextAllowed $Literal.Text 'nls-original') { return 'kept' }
+        return 'skip'
+    }
+    if ($last -eq ',' -and $prev.Count -ge 4 -and $null -ne $NlsMessages) {
+        $num = [string]$prev[$prev.Count - 2]
+        $paren = [string]$prev[$prev.Count - 3]
+        if ($paren -eq '(' -and $num -match '^\d+$') {
+            $nlsIndex = [int]$num
+            if ($nlsIndex -ge 0 -and $nlsIndex -lt @($NlsMessages).Count -and [string]$NlsMessages[$nlsIndex] -eq $Literal.Text) {
+                if (Test-ContextAllowed $Literal.Text 'nls-original') { return 'kept' }
+                return 'skip'
+            }
         }
     }
-    return @{ Hit = $hit; Miss = $miss }
+    if (-not (Test-ContextAllowed $Literal.Text 'display')) { return 'skip' }
+    return 'replace'
+}
+
+function Get-NlsMessages([string]$InstallRoot) {
+    $path = Join-Under $InstallRoot 'resources/app/out/nls.messages.json'
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    $parsed = (Read-Utf8Strict $path) | ConvertFrom-Json
+    return @($parsed)
+}
+
+function Get-LiteralPlan([string]$InstallRoot, $Entries) {
+    $nls = Get-NlsMessages $InstallRoot
+    $replaced = 0
+    $kept = 0
+    $skippedKeys = New-OrdinalDictionary
+    $miss = 0
+    $displayFiles = @{}
+    $displaySources = New-OrdinalDictionary
+    $protectedFiles = @{}
+    $seen = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
+    foreach ($relative in @($Script:Contract.PatchableRelative)) {
+        if ($relative -eq $Script:Contract.ProductJsonRelative) { continue }
+        $full = Join-Under $InstallRoot $relative
+        if (-not (Test-Path -LiteralPath $full)) { continue }
+        $text = Read-Utf8Strict $full
+        foreach ($literal in @(Get-QuotedLiterals $text)) {
+            if (-not $Entries.ContainsKey($literal.Text)) { continue }
+            if (-not $seen.ContainsKey($literal.Text)) { $seen[$literal.Text] = $true }
+            $kind = Get-LiteralKind $text $literal $nls
+            if ($kind -eq 'skip') {
+                $skippedKeys['n'] = [int]$(if ($skippedKeys.ContainsKey('n')) { $skippedKeys['n'] } else { 0 }) + 1
+            } elseif ($kind -eq 'kept') {
+                $kept++
+            } elseif ($kind -eq 'replace' -and [string]$Entries[$literal.Text] -ne $literal.Text) {
+                $replaced++
+                $displayFiles[$relative] = $true
+                $displaySources[$literal.Text] = $true
+            }
+        }
+    }
+    foreach ($source in @($Entries.Keys)) {
+        if (-not $seen.ContainsKey($source)) { $miss++ }
+    }
+    return @{
+        Hit            = ($replaced + $kept)
+        Miss           = $miss
+        Skipped        = [int]$(if ($skippedKeys.ContainsKey('n')) { $skippedKeys['n'] } else { 0 })
+        DisplayFiles   = $displayFiles
+        DisplaySources = $displaySources
+    }
 }
 
 function Get-MustChangeSet([string]$InstallRoot, $Entries) {
+    $plan = Get-LiteralPlan $InstallRoot $Entries
     $set = @{}
-    $rootFull = [System.IO.Path]::GetFullPath($InstallRoot)
-    foreach ($file in @(Get-OutTextFiles $InstallRoot)) {
-        $text = Read-Utf8Strict $file.FullName
-        $touches = $false
-        foreach ($source in @($Entries.Keys)) {
-            $translation = [string]$Entries[$source]
-            if ($translation -ne [string]$source -and $text.Contains([string]$source)) {
-                $touches = $true
-                break
-            }
-        }
-        if ($touches) {
-            $relative = [System.IO.Path]::GetRelativePath($rootFull, $file.FullName).Replace('\', '/')
-            $set[$relative] = $true
-        }
+    foreach ($relative in @($plan.DisplayFiles.Keys)) {
+        $set[$relative] = $true
     }
     if ($set.Count -gt 0) {
         $set[$Script:Contract.ProductJsonRelative] = $true
@@ -650,39 +861,92 @@ function Get-PlaceholderNotes([string]$InstallRoot) {
     return $notes
 }
 
-function Assert-HitsAndPreserved([string]$InstallRoot, $Entries, [string]$BeforeText) {
+function Test-QuotedLiteral([string]$Text, [string]$Source) {
+    foreach ($literal in @(Get-QuotedLiterals $Text)) {
+        if ($literal.Text -eq $Source) { return $true }
+    }
+    return $false
+}
+
+function Assert-HitsAndPreserved([string]$InstallRoot, $Entries, $DisplaySources, $NlsBefore) {
     $text = Get-InstallSourceText $InstallRoot
-    foreach ($source in @($Entries.Keys)) {
-        if (-not $BeforeText.Contains([string]$source)) {
-            continue
+    foreach ($source in @($DisplaySources.Keys)) {
+        $still = $false
+        foreach ($relative in @($Script:Contract.PatchableRelative)) {
+            if ($relative -eq $Script:Contract.ProductJsonRelative) { continue }
+            $full = Join-Under $InstallRoot $relative
+            if (-not (Test-Path -LiteralPath $full)) { continue }
+            $fileText = Read-Utf8Strict $full
+            foreach ($literal in @(Get-QuotedLiterals $fileText)) {
+                if ($literal.Text -ne $source) { continue }
+                if ((Get-LiteralKind $fileText $literal $NlsBefore) -eq 'replace') { $still = $true }
+            }
         }
-        $translation = [string]$Entries[$source]
-        $present = $text.Contains([string]$source)
-        if ($translation -eq [string]$source) {
-            Add-Result $present "映射值与原文相同，原文仍在: $source"
-        } elseif ($present) {
-            Add-Result $false "已命中的原文仍在安装树中: $source"
-        } else {
-            Add-Result $true "已命中的原文已从安装树消失: $source"
-        }
+        Add-Result (-not $still) "展示用字面量已替换: $source"
     }
     foreach ($source in $Script:Contract.PreservedSources) {
         if ($Entries.ContainsKey([string]$source) -and [string]$Entries[[string]$source] -ne [string]$source) {
             continue
         }
-        Add-Result ($text.Contains([string]$source)) "未收录原文仍在: $source"
+        Add-Result (Test-QuotedLiteral $text $source) "未收录原文仍以完整字面量存在: $source"
     }
 }
 
-function Assert-MatchReport([string]$Output, [int]$ExpectedHit, [int]$ExpectedMiss, [string]$Label) {
-    $match = [regex]::Match($Output, $Script:Contract.ReportPattern)
-    Add-Result $match.Success "$Label 输出含匹配报告（命中/未命中数量）"
-    if (-not $match.Success) {
-        return
+function Assert-ProtectedBytes([string]$InstallRoot, $Baseline, $ProtectedFiles, $DisplayFiles) {
+    foreach ($relative in @($ProtectedFiles.Keys)) {
+        if ($DisplayFiles.ContainsKey($relative)) { continue }
+        $full = Join-Under $InstallRoot $relative
+        if (-not (Test-Path -LiteralPath $full)) {
+            Add-Result $false "不可替换写法保持原字节: $relative"
+            continue
+        }
+        $hash = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToUpperInvariant()
+        $same = $Baseline.ContainsKey($relative) -and $Baseline[$relative] -eq $hash
+        Add-Result $same "不可替换写法保持原字节: $relative"
     }
-    $hit = [int]$match.Groups[1].Value
-    $miss = [int]$match.Groups[2].Value
-    Add-Result (($hit -eq $ExpectedHit) -and ($miss -eq $ExpectedMiss)) "$Label 匹配报告为命中=$ExpectedHit 未命中=$ExpectedMiss（实际命中=$hit 未命中=$miss）"
+}
+
+function Assert-MatchReport([string]$Output, $Expected, [string]$Label) {
+    $report = [regex]::Match($Output, '匹配报告:\s*命中=(\d+)\s+未命中=(\d+)')
+    $skip = [regex]::Match($Output, '(?m)^跳过=(\d+)\s*$')
+    Add-Result ($report.Success -and $skip.Success) "$Label 输出两行匹配报告（命中/未命中 与 跳过）"
+    if (-not $report.Success -or -not $skip.Success) { return }
+    $hit = [int]$report.Groups[1].Value
+    $miss = [int]$report.Groups[2].Value
+    $skipped = [int]$skip.Groups[1].Value
+    $ok = ($hit -eq $Expected.Hit) -and ($miss -eq $Expected.Miss) -and ($skipped -eq $Expected.Skipped)
+    Add-Result $ok "$Label 匹配报告为命中=$($Expected.Hit) 未命中=$($Expected.Miss) 跳过=$($Expected.Skipped)（实际命中=$hit 未命中=$miss 跳过=$skipped）"
+}
+
+function Assert-OutsideUnchanged($Baseline, $Patched) {
+    foreach ($relative in @($Baseline.Keys)) {
+        if ($Script:Contract.PatchableRelative -contains $relative) { continue }
+        $same = $Patched.ContainsKey($relative) -and $Patched[$relative] -eq $Baseline[$relative]
+        Add-Result $same "补丁范围之外哈希不变: $relative"
+    }
+}
+
+function Assert-DangerousSnippets([string]$InstallRoot) {
+    $blob = ''
+    foreach ($relative in @($Script:Contract.PatchableRelative)) {
+        $full = Join-Under $InstallRoot $relative
+        if (Test-Path -LiteralPath $full) { $blob += Read-Utf8Strict $full }
+    }
+    foreach ($snippet in $Script:Contract.DangerousSnippets) {
+        Add-Result ($blob.Contains([string]$snippet)) "危险或保留写法保持原样: $snippet"
+    }
+}
+
+function Assert-PriorBackupIntact($Before, $After, [string]$Label, [string[]]$Ignore) {
+    $bad = [System.Collections.Generic.List[string]]::new()
+    foreach ($key in @($Before.Keys)) {
+        if ($Ignore -and ($Ignore -contains $key)) { continue }
+        if (-not $After.ContainsKey($key) -or $Before[$key] -ne $After[$key]) {
+            $bad.Add($key) | Out-Null
+        }
+    }
+    Add-Result ($bad.Count -eq 0) $Label
+    foreach ($item in $bad) { Write-Line "    备份被改写 $item" }
 }
 
 function Assert-ProductIdentity($Before, $After) {
@@ -816,8 +1080,8 @@ try {
     Assert-TextHygiene $install '基线'
     $baselineProduct = Assert-ChecksumsMatchDisk $install '基线'
     $placeholderNotes = Get-PlaceholderNotes $install
-    $beforeText = Get-InstallSourceText $install
-    $expectedMatch = Get-ExpectedMatchCounts $install $mapInfo.Entries
+    $nlsBefore = Get-NlsMessages $install
+    $expectedMatch = Get-LiteralPlan $install $mapInfo.Entries
     $mustChange = Get-MustChangeSet $install $mapInfo.Entries
 
     Write-Line '--- 首次打补丁 ---'
@@ -828,10 +1092,12 @@ try {
         Add-Result $false '首次打补丁失败，跳过依赖它的幂等与还原断言'
     } else {
         $firstOutput = Get-CombinedOutput $first
-        Assert-MatchReport $firstOutput $expectedMatch.Hit $expectedMatch.Miss '首次打补丁'
+        Assert-MatchReport $firstOutput $expectedMatch '首次打补丁'
         $patched = Get-InstallSnapshot $install
         Assert-ChangedFileSet $baseline $patched $mustChange
-        Assert-HitsAndPreserved $install $mapInfo.Entries $beforeText
+        Assert-HitsAndPreserved $install $mapInfo.Entries $expectedMatch.DisplaySources $nlsBefore
+        Assert-OutsideUnchanged $baseline $patched
+        Assert-DangerousSnippets $install
         Assert-PlaceholderFilesStable $install $placeholderNotes
         Assert-TextHygiene $install '打补丁后'
         Assert-StructureMarkers $install
@@ -866,6 +1132,7 @@ try {
         }
 
         Write-Line '--- 重复打补丁 ---'
+        $backupBeforeRepeat = Get-InstallSnapshot $backup
         $second = Invoke-UnderTest $PatchScript $install $backup
         Add-Result ($second.ExitCode -eq 0) '重复打补丁退出码为 0'
         if ($second.ExitCode -ne 0) {
@@ -873,6 +1140,37 @@ try {
         }
         $patchedAgain = Get-InstallSnapshot $install
         Assert-SnapshotEqual $patched $patchedAgain '重复打补丁后整树哈希与第一次结果一致'
+        Assert-PriorBackupIntact $backupBeforeRepeat (Get-InstallSnapshot $backup) '重复打补丁不覆盖已有备份' @('patch-report.json')
+
+        Write-Line '--- 词表扩充后再还原 ---'
+        $mapMutable = [bool]$mapInfo.Mutable
+        if ($mapMutable) {
+            $mapOriginal = Read-Utf8Strict $mapInfo.Path
+            try {
+                $expanded = ($mapOriginal | ConvertFrom-Json -AsHashtable)
+                $expanded['Smoke Extra Label'] = '冒烟扩充'
+                $lines = [System.Collections.Generic.List[string]]::new()
+                $lines.Add('{') | Out-Null
+                $keys = @($expanded.Keys)
+                for ($i = 0; $i -lt $keys.Count; $i++) {
+                    $key = [string]$keys[$i]
+                    $value = [string]$expanded[$key]
+                    $comma = if ($i -lt ($keys.Count - 1)) { ',' } else { '' }
+                    $lines.Add(('  {0}: {1}{2}' -f ($key | ConvertTo-Json), ($value | ConvertTo-Json), $comma)) | Out-Null
+                }
+                $lines.Add('}') | Out-Null
+                Write-Utf8NoBom $mapInfo.Path (($lines -join "`n") + "`n")
+                $backupBeforeExpand = Get-InstallSnapshot $backup
+                $expandRun = Invoke-UnderTest $PatchScript $install $backup
+                Add-Result ($expandRun.ExitCode -eq 0) '词表扩充后再次打补丁退出码为 0'
+                if ($expandRun.ExitCode -ne 0) { Write-ChildOutput $expandRun }
+                Assert-PriorBackupIntact $backupBeforeExpand (Get-InstallSnapshot $backup) '词表扩充后不覆盖旧备份' @('manifest.json')
+            } finally {
+                Write-Utf8NoBom $mapInfo.Path $mapOriginal
+            }
+        } else {
+            Write-Line '映射文件与补丁脚本不在同一可写目录，跳过追加词条，仍检查还原回到原始基线'
+        }
 
         Write-Line '--- 还原 ---'
         $restoredRun = Invoke-UnderTest $RestoreScript $install $backup
@@ -881,7 +1179,7 @@ try {
             Write-ChildOutput $restoredRun
         }
         $restored = Get-InstallSnapshot $install
-        Assert-SnapshotEqual $baseline $restored '还原后整树哈希与基线一致'
+        Assert-SnapshotEqual $baseline $restored '还原后整树哈希与原始基线一致'
     }
 
     Write-Line '--- 其他版本仍打补丁 ---'
@@ -899,13 +1197,13 @@ try {
     $productText = $productText.Replace($needle, $replacement)
     Write-Utf8NoBom $productPath $productText
     $versionBaseline = Get-InstallSnapshot $versionInstall
-    $versionExpected = Get-ExpectedMatchCounts $versionInstall $mapInfo.Entries
+    $versionExpected = Get-LiteralPlan $versionInstall $mapInfo.Entries
     $versionRun = Invoke-UnderTest $PatchScript $versionInstall $versionBackup
     Add-Result ($versionRun.ExitCode -eq 0) '版本不是 3.27.22 时退出码为 0'
     $versionOutput = Get-CombinedOutput $versionRun
     $warned = $versionOutput.Contains('警告') -and $versionOutput.Contains([string]$Script:Contract.OtherVersion) -and $versionOutput.Contains([string]$Script:Contract.SupportedVersion)
     Add-Result $warned '版本不是 3.27.22 时输出警告，并带上实际版本与 3.27.22'
-    Assert-MatchReport $versionOutput $versionExpected.Hit $versionExpected.Miss '其他版本'
+    Assert-MatchReport $versionOutput $versionExpected '其他版本'
     if ($versionRun.ExitCode -ne 0 -or -not $warned) {
         Write-ChildOutput $versionRun
     }
@@ -925,6 +1223,34 @@ try {
     }
     $versionRestored = Get-InstallSnapshot $versionInstall
     Assert-SnapshotEqual $versionBaseline $versionRestored '其他版本还原后整树哈希与打补丁前基线一致'
+
+    Write-Line '--- 升级后复用旧备份 ---'
+    $upgradeInstall = Join-Path $Script:WorkRoot 'install-upgrade'
+    $upgradeBackup = Join-Path $Script:WorkRoot 'backup-upgrade'
+    New-FakeInstall $upgradeInstall
+    $upgradePatch = Invoke-UnderTest $PatchScript $upgradeInstall $upgradeBackup
+    Add-Result ($upgradePatch.ExitCode -eq 0) '升级用例的首次打补丁退出码为 0'
+    if ($upgradePatch.ExitCode -ne 0) {
+        Write-ChildOutput $upgradePatch
+        Add-Result $false '首次备份没有建立，跳过升级后复用备份的断言'
+    } else {
+        $upgradeProduct = Join-Under $upgradeInstall $Script:Contract.ProductJsonRelative
+        $upgradeJs = Join-Under $upgradeInstall 'resources/app/out/vs/workbench/workbench.desktop.main.js'
+        $upgradeText = Read-Utf8Strict $upgradeProduct
+        $upgradeText = $upgradeText.Replace(
+            '"version": "' + $Script:Contract.SupportedVersion + '"',
+            '"version": "' + $Script:Contract.OtherVersion + '"')
+        Write-Utf8NoBom $upgradeProduct $upgradeText
+        $jsText = Read-Utf8Strict $upgradeJs
+        Write-Utf8NoBom $upgradeJs ($jsText + "/* upgraded */`n")
+        $upgradedTree = Get-InstallSnapshot $upgradeInstall
+        $oldBackup = Get-InstallSnapshot $upgradeBackup
+        $reuse = Invoke-UnderTest $PatchScript $upgradeInstall $upgradeBackup
+        Assert-PriorBackupIntact $oldBackup (Get-InstallSnapshot $upgradeBackup) '升级后复用备份目录时不覆盖旧版备份'
+        $reuseRestore = Invoke-UnderTest $RestoreScript $upgradeInstall $upgradeBackup
+        $afterReuse = Get-InstallSnapshot $upgradeInstall
+        Assert-SnapshotEqual $upgradedTree $afterReuse '还原回到当前版本自己的补丁前字节，不混入旧版备份'
+    }
 
     Write-Line '--- 读不出版本号 ---'
     foreach ($case in @(

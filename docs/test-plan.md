@@ -99,19 +99,21 @@ pwsh -NoProfile -NonInteractive -File .\restore.ps1 -InstallPath <安装根> -Ba
 | 版本是 `3.27.22` | 直接打补丁，退出码 `0` |
 | 版本是其他号（例如 `3.28.0`） | 打印警告（含实际版本号和 `3.27.22`），照常打补丁，退出码 `0`。见 `docs/acceptance.md` 的 G1 和 3.1 节。P0 100% 覆盖率只适用于 `3.27.22`；其他版本的验收是不崩溃、能还原 |
 | 读不出版本号 | `product.json` 缺少 `version`，或文件无法解析。退出码非 `0`（约定为 `3`，这个码只用于本情况）。安装树不改，不写备份 |
-| 成功 | 退出码 `0`。已经打过再次执行也是 `0`，文件字节与第一次打完后相同。输出包含一行 `匹配报告: 命中=<n> 未命中=<m>` |
+| 成功 | 退出码 `0`。已经打过再次执行也是 `0`，文件字节与第一次打完后相同。输出两行：`匹配报告: 命中=N 未命中=M` 和 `跳过=K`。不要求 N + M 等于词表条数 |
 | 路径不存在 | 退出码非 `0`（建议 `2`）。输出里包含传入的路径。不创建该路径，不写备份文件 |
 | 只有 `app.asar` | 退出码 `1`。说明首版不支持，需要 `resources/app` 散装文件。安装树不改 |
 | Cursor 正在运行 | 退出码非 `0`（建议 `4`）。说明进程仍在运行，需要先退出。无 TTY 时直接拒绝，不调用 `Read-Host`。安装树不改 |
 | 其他失败 | 退出码非 `0`（建议 `1`） |
 | 输出 | 人能读的文本写到 stdout 或 stderr。不要只靠 `$ErrorActionPreference = 'Stop'` 下的 `Write-Error`，那种写法可能在走到 `exit` 之前就中断，退出码会变成别的数字 |
 | 校验和 | 见下一节。改过字节的 `resources/app/out` 文件必须同步更新 `product.json` 的 `checksums`。键集合保持不变。`version`、`nameShort`、`nameLong`、`applicationName`、`commit`、`quality`、`dataFolderName`、`win32MutexName` 保持不变 |
-| 备份 | 放在 `-BackupDir` 内。内部可以是目录镜像或单个归档。`restore.ps1` 使用同一个 `-BackupDir` 把安装根恢复成打补丁前的文件集合和字节 |
-| 安装树 | 打补丁不在安装根内增加或删除文件。备份不要放进安装根 |
+| 备份 | 放在 `-BackupDir` 内。内部可以是目录镜像或单个归档。`restore.ps1` 使用同一个 `-BackupDir` 把安装根恢复成打补丁前的原始字节。已有备份文件不能被后一次打补丁覆盖。备份若属于另一个 `version`，再次打补丁和还原都要拒绝，不能把旧版字节写进新安装，也不能静默混用 |
+| 安装树 | 打补丁不在安装根内增加或删除文件。备份不要放进安装根。允许改字节的只有 `resources/app/out/vs/workbench/workbench.desktop.main.js`、`workbench.glass.main.js`、`nls.messages.json`，以及 `product.json` 里已经存在的 `checksums`。`extensions/` 和 `nls.keys.json` 必须保持原字节。这三个文件之外的所有文件哈希不变 |
 | 编码 | 写回的 `.js`、`.json`、`.css` 使用 UTF-8，无 BOM。未命中词表的文件保持原字节，包括换行 |
 | 词表文件 | 仓库根 `i18n/zh-CN.json`，JSON 对象，键是整句原文，值是译文。更长的键先替换。术语以 `docs/glossary.md` 为准，开发产出这个文件 |
-| 匹配报告 | 每次成功打补丁都打印 `匹配报告: 命中=<n> 未命中=<m>`。命中 = 映射表里在 `resources/app/out` 的 `.js` / `.json` / `.css` 中至少出现一次的条目数；未命中 = 一次都没出现的条目数。两者之和等于映射表条目数 |
-| 译文 | 冒烟不检查译文汉字。它检查：命中的原文从安装树消失、未收录原文仍在、占位符集合不变、能还原。若 `i18n/zh-CN.json` 存在，另查每条译文与原文的占位符一致（`{0}`、`%s`、`%d`、`${name}`） |
+| 匹配报告 | 成功时正好两行：`匹配报告: 命中=N 未命中=M`，然后 `跳过=K`。只认带引号的完整字面量，键区分大小写，不做子串匹配。N 按出现次数，等于实际替换次数加上故意保留英文的次数。故意保留英文有两种：`fn(数字索引, "原文")` 且 `nls.messages.json` 该下标等于这句原文；属性名是 `original` 的字段。M 按词条计算，只看三个被改文件里一次完整字面量都没出现的词条。K 按出现次数，包括危险写法和没进短词白名单的短词，既不算命中也不算未命中。因此不断言 N + M 等于词表条数 |
+| 不可替换 | 比较号在字面量任意一侧（`x === "Chat"` 与 `"Chat" === x`）、成员/枚举赋值（`Status.Chat = "Keep"`、`Status["Log Out"] = "Log Out"`）、下标 `obj["Chat"]`、`.includes("Chat")`、`.get("Chat")`、`publicLog("...")` 遥测事件名。这些出现必须保持原字节。同一条键如果另有展示用字面量，展示用的仍要替换 |
+| nls 原文 | `localize(索引, "原文")` 且 `nls.messages.json` 该下标仍是这句原文时，调用处的英文字面量保留，计入「保留」 |
+| 译文 | 冒烟不检查译文汉字。它检查：展示用字面量被换掉、未收录原文仍在、占位符集合不变、不可替换写法原字节还在、能还原。若 `i18n/zh-CN.json` 存在，另查每条译文与原文的占位符一致（`{0}`、`%s`、`%d`、`${name}`）。仅大小写不同的键（如 `Sign in` / `Sign In`）都要保留 |
 
 冒烟强制检查的是：成功为 `0`、读不出版本或路径不存在为非 `0`、只有 `app.asar` 为 `1`、警告和匹配报告的文本、文件哈希、校验和与磁盘一致、UTF-8 无 BOM。建议退出码 `2` 和 `4` 不逐个断言。退出码 `3` 只表示读不出版本号，冒烟断言的是非 `0`。
 
@@ -146,6 +148,7 @@ resources/app/out/vs/workbench/workbench.desktop.main.css
 resources/app/out/vs/workbench/workbench.desktop.main.js
 resources/app/out/vs/workbench/workbench.glass.main.js
 resources/app/out/vs/workbench/api/node/extensionHostProcess.js
+resources/app/extensions/smoke/extension.js
 resources/app/out/vs/workbench/contrib/composer/browser/preload-webview-browser.js
 ```
 
@@ -213,7 +216,7 @@ function Export-TreeHash([string]$Root, [string]$OutFile) {
 | 执行方式 | 自动。补丁脚本落地后，在实验室副本上再手工做一次 |
 | 前置条件 | 满足 TP-00。安装根是假安装或尚未打过补丁的实验室副本。`product.json` 的 `version` 为 `3.27.22`。Cursor 没有在运行。`-BackupDir` 是安装根之外的空目录 |
 | 步骤 | 1. 对安装根做哈希清单 `before.txt`。2. 运行 `pwsh -NoProfile -NonInteractive -File .\patch.ps1 -InstallPath <安装根> -BackupDir <备份目录>`。3. 再做清单 `patched.txt`。4. 检查词表、保留英文、`checksums`、编码 |
-| 预期结果 | 退出码 `0`。输出含 `匹配报告: 命中=<n> 未命中=<m>`，数字与「映射表条目是否出现在安装树」一致。命中的原文从安装树消失，未收录原文仍在，占位符集合不变。冒烟不比对译文汉字。`checksums` 键集合不变，每条等于对应文件的 SHA256 Base64（无 `=`），被改写文件的校验和与打补丁前不同。`version` 仍是 `3.27.22`。安装根内文件没有增减。`.js` / `.json` / `.css` 为 UTF-8 无 BOM，非空。有文件被改写时，`-BackupDir` 在安装根之外且里面至少有一个文件 |
+| 预期结果 | 退出码 `0`。输出两行 `匹配报告: 命中=N 未命中=M` 和 `跳过=K`，数字与三个目标文件里的完整引号字面量扫描一致，且不要求 N + M 等于词表条数。展示用字面量被换掉，`localize(索引, "原文")` 和 `original` 字段保留英文，危险写法和未进白名单的短词计入跳过并保持原样。`extensions/`、`nls.keys.json` 以及三个目标文件和 `product.json` 之外的文件哈希不变。`checksums` 键集合不变，被改写文件的校验和按 SHA256 Base64（无 `=`）更新。`version` 仍是 `3.27.22`。安装根内文件没有增减。文本为 UTF-8 无 BOM。有文件被改写时，`-BackupDir` 在安装根之外且里面至少有一个文件 |
 
 ### TP-02 重复打补丁（幂等）
 
@@ -264,6 +267,36 @@ function Export-TreeHash([string]$Root, [string]$OutFile) {
 | 前置条件 | 满足 TP-00。安装根里有 `resources\app.asar`，没有 `resources\app\product.json` |
 | 步骤 | 1. 做哈希清单。2. 运行 `patch.ps1` |
 | 预期结果 | 退出码 `1`。输出说明首版不支持这种打包，需要 `resources\app` 下的散装文件。安装树哈希不变，不写备份 |
+
+### TP-11 升级后继续用同一个备份目录
+
+| 项 | 内容 |
+| --- | --- |
+| 优先级 | P0 |
+| 执行方式 | 自动 |
+| 前置条件 | 满足 TP-00。一份假安装已经用 `-BackupDir` 打过补丁，备份里记下的版本是 `3.27.22` |
+| 步骤 | 1. 把该安装的 `version` 改成 `3.28.0`，并改动一个已经备份过的脚本，模拟升级。2. 记下安装树和备份目录的哈希。3. 用同一个 `-BackupDir` 再运行 `patch.ps1`。4. 再运行 `restore.ps1` |
+| 预期结果 | 已有的 `3.27.22` 备份文件一个字节都不改。可以按版本另存新备份，但不能覆盖旧文件，也不能把旧版字节还原进升级后的安装。还原结束后，安装树等于升级之后、第二次打补丁之前的字节 |
+
+### TP-12 词表扩充后重新打补丁再还原
+
+| 项 | 内容 |
+| --- | --- |
+| 优先级 | P0 |
+| 执行方式 | 自动 |
+| 前置条件 | 满足 TP-00。同一安装根已经打过一次补丁，`-BackupDir` 里是原始文件。映射表随后多了一条夹具里的原文 |
+| 步骤 | 1. 记下已有备份文件的哈希。2. 再运行 `patch.ps1`。3. 运行 `restore.ps1`。4. 与打任何补丁之前的基线比较 |
+| 预期结果 | 第二次打补丁退出码 `0`。已有备份文件哈希不变，可以新增备份项，不能改写旧项。还原退出码 `0`。安装树哈希回到原始基线，而不是停在第一次或第二次打补丁之后 |
+
+### TP-13 不能替换的代码写法
+
+| 项 | 内容 |
+| --- | --- |
+| 优先级 | P0 |
+| 执行方式 | 自动。危险写法和保留英文写在 `workbench.desktop.main.js` 与 `workbench.glass.main.js` 里 |
+| 前置条件 | 映射表含这些原文。满足 TP-00 |
+| 步骤 | 1. 打补丁。2. 比较这些文件的 SHA256 |
+| 预期结果 | 这些写法在 `workbench.desktop.main.js` / `workbench.glass.main.js` 里保持原样：`x === "Settings"`、`"Chat" === x`、`"Chat" === flag`、`Status.Chat = "Keep"`、`obj["Apply"]`、`list.includes("New Chat")`、`map.get("Cursor Settings")`、`publicLog("Sign in")`、`Status["Log Out"] = "Log Out"`。`localize(0, "Cursor Settings")` 和 `original: "New Agent"` 保留英文。展示用的 `"New Chat"`、`"New Agent"` 仍要替换。`extensions/`、`nls.keys.json` 以及这三个文件和 `product.json` 之外的全部文件哈希不变 |
 
 ### TP-05 安装路径不存在
 
@@ -326,6 +359,9 @@ function Export-TreeHash([string]$Root, [string]$OutFile) {
 | TP-04 其他版本仍打补丁 | 是，夹具版本 `3.28.0`，检查警告、匹配报告、退出码 0、还原哈希 | 可复核 |
 | TP-04b 读不出版本号 | 是，缺字段和无法解析各一次 | 可复核 |
 | TP-04c 只有 app.asar | 是，退出码 1 | 可复核 |
+| TP-11 升级后复用旧备份 | 是 | 可复核 |
+| TP-12 词表扩充后再还原 | 是。映射标了 `_smokeMutable` 时会追加探针；否则只做重复打补丁后的还原 | 可复核 |
+| TP-13 不可替换写法 | 是，比较原字节 | 可复核 |
 | TP-05 路径不存在 | 是，`patch.ps1` 与 `restore.ps1` 都测 | 可复核 |
 | TP-06 进程正在运行 | 否 | 是 |
 | TP-07 无损坏提示 | 只覆盖 `checksums` 与磁盘一致 | 启动两次，看对话框 |
@@ -336,7 +372,8 @@ function Export-TreeHash([string]$Root, [string]$OutFile) {
 
 - 冒烟通过只说明命中、占位符、校验和、还原和退出码符合契约。译文字是否等于 `docs/glossary.md`，要靠 `i18n/zh-CN.json` 的占位符检查加上实验室副本上的手工对照。
 - 夹具里的句子是探针，不是 3.27.22 的真实字符串清单。映射表里没有这些句子时，命中数可以是 0，冒烟仍然要求报告格式、还原和「未收录原文留下」成立。
-- 短键先替换会拆开更长的原文。实现按键长度从长到短替换。
+- 命中只认带引号的完整字面量。`Apply` 不会因为出现在 `Apply {0} changes` 里就算命中。
+- 比较、下标、`.includes` / `.get`、`publicLog` 和枚举赋值必须留原字节。展示用的同一条原文仍要替换。
 - 只有 `app.asar` 的安装会以退出码 `1` 停住。首版不自动解包。
 - 进程检测若只看进程名，真实安装的 Cursor 开着也会拒绝。测试仍然只把 `-InstallPath` 指到副本。
 - 当前仓库还没有被测脚本时，CI 是红的。日志应为 `SMOKE_STATUS=SKIPPED` 与「被测脚本缺失」。
