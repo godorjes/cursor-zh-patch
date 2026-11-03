@@ -1,0 +1,9 @@
+{
+  "targetCursorVersion": "3.27.22",
+  "vscodeVersion": "1.128.0",
+  "languagePack": {
+    "id": "ms-ceintl.vscode-language-pack-zh-hans",
+    "version": "1.128.2026071013",
+    "vsixUrl": "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/MS-CEINTL/vsextensions/vscode-language-pack-zh-hans/1.128.2026071013/vspackage"
+  }
+}

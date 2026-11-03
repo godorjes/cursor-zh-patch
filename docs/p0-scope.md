@@ -74,6 +74,22 @@
 - Cursor 专有的右键菜单项、编辑器标题栏按钮
 - 不常用设置页（网络、高级、实验性子页）
 
+## 3.27.22 无此文案
+
+下面这些预期短语在 3.27.22 的 `workbench.desktop.main.js`、`workbench.glass.main.js`、`nls.messages.json` 里没有完整引号字面量，不计入本版本 P0 分母：
+
+- `Accept All`、`Reject All`、`Accept File`、`Reject File`
+- 独立的 `User Rules`、`MCP Tools`、`Codebase Indexing`、`Indexing`、`Checkpoint`、`View Diff`
+- `Log out`（实际按钮文案是 `Log Out`）
+
+本版本实际出现、已收入映射表的写法：
+
+- `Accept All Changes from Left`、`Accept All Changes from Right`
+- `Reject All Edits`
+- `Cursor & User Rules`、`View User Rules`、`Migrated User Rules`
+- `MCP Tools Protection`
+- `Log Out`
+
 ## 不在范围内
 - **VS Code 核心界面**（菜单栏、资源管理器、搜索、源代码管理、调试、扩展、终端面板、设置编辑器中的 VS Code 设置）：由 VS Code 官方简体中文语言包（nls，locale=zh-cn）覆盖。Cursor 自有界面由补丁替换 `workbench.*.main.js` 中的字符串，并重算 `product.json` 校验和。本项目只需确保补丁与语言包共存时不冲突、术语不打架。
 - 第三方扩展界面。
